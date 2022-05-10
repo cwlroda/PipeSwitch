@@ -52,8 +52,6 @@ jobs:
 
       - name: Set environment variables
         run: |
-          export MAX_JOBS=$(nproc)
-          echo $MAX_JOBS
           export USE_CUDA=1
           echo $USE_CUDA
           export USE_CUDNN=1
@@ -73,6 +71,9 @@ jobs:
           git submodule sync
           git submodule update --init --recursive --jobs 0
           export CMAKE_PREFIX_PATH=${CONDA_PREFIX:-"$(dirname $(which conda))/../"}
+          python3 setup.py install
+          chmod +x ${{github.workspace}}/pytorch_plugins/overwrite.sh
+          bash ${{github.workspace}}/pytorch_plugins/overwrite.sh .
           python3 setup.py install
           export PYTHONPATH=$PYTHONPATH:$PWD
           source $HOME/.bashrc
