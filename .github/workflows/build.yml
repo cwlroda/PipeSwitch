@@ -30,17 +30,13 @@ jobs:
         run: |
           $CONDA/bin/conda env update --file env.yml --name base
 
-      - name: Clone PyTorch
+      - name: Clone and build PyTorch
         run: |
           git clone https://github.com/pytorch/pytorch.git
           cd pytorch
           git checkout v1.11.0
           git submodule sync
           git submodule update --init --recursive --jobs 0
-
-      - name: Build
-        # Build your program with the given configuration
-        run: |
           export CMAKE_PREFIX_PATH=${CONDA_PREFIX:-"$(dirname $(which conda))/../"}
           python3 setup.py install
           export PYTHONPATH=$PYTHONPATH:$PWD
