@@ -46,12 +46,12 @@ jobs:
           auto-activate-base: false
 
       - name: Test conda installation
-      - run: |
+        run: |
           conda info
           conda list
 
       - name: Set environment variables
-      - run: |
+        run: |
           export MAX_JOBS=$(nproc)
           echo $MAX_JOBS
           export USE_CUDA=1
