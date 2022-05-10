@@ -33,8 +33,8 @@ jobs:
       - name: Clone PyTorch
         run: |
           git clone https://github.com/pytorch/pytorch.git
-          git checkout v1.11.0
           cd pytorch
+          git checkout v1.11.0
           git submodule sync
           git submodule update --init --recursive --jobs 0
 
