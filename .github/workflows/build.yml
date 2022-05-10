@@ -60,9 +60,9 @@ jobs:
           echo $USE_CUDNN
           export CUDA_HOME=${{steps.cuda-toolkit.outputs.CUDA_PATH}}
           echo $CUDA_HOME
-          export CUDNN_INCLUDE_DIR=${{$CONDA/envs/pipeswitch/include}}
+          export CUDNN_INCLUDE_DIR="$CONDA/envs/pipeswitch/include"
           echo $CUDNN_INCLUDE_DIR
-          export CUDNN_LIB_DIR=${{$CONDA/envs/pipeswitch/lib}}
+          export CUDNN_LIB_DIR="$CONDA/envs/pipeswitch/lib"
           echo $CUDNN_LIB_DIR
 
       - name: Clone and build PyTorch
