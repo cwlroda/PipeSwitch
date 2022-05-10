@@ -23,6 +23,17 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
+      - uses: Jimver/cuda-toolkit@v0.2.5
+        id: cuda-toolkit
+        with:
+          cuda: "11.2"
+
+      - name: Test CUDA installation
+        run: |
+        echo "Installed CUDA version is: ${{steps.cuda-toolkit.outputs.cuda}}"
+        echo "CUDA install location: ${{steps.cuda-toolkit.outputs.CUDA_PATH}}"
+        nvcc -V
+
       - uses: conda-incubator/setup-miniconda@v2.1.1
         with:
           miniconda-version: "latest"
@@ -34,9 +45,25 @@ jobs:
           python-version: 3.8
           auto-activate-base: false
 
+      - name: Test conda installation
       - run: |
           conda info
           conda list
+
+      - name: Set environment variables
+      - run: |
+          export MAX_JOBS=$(nproc)
+          echo $MAX_JOBS
+          export USE_CUDA=1
+          echo $USE_CUDA
+          export USE_CUDNN=1
+          echo $USE_CUDNN
+          export CUDA_HOME=${{steps.cuda-toolkit.outputs.CUDA_PATH}}
+          echo $CUDA_HOME
+          export CUDNN_INCLUDE_DIR=${{$CONDA/envs/pipeswitch/include}}
+          echo $CUDNN_INCLUDE_DIR
+          export CUDNN_LIB_DIR=${{$CONDA/envs/pipeswitch/lib}}
+          echo $CUDNN_LIB_DIR
 
       - name: Clone and build PyTorch
         run: |
