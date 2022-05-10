@@ -52,29 +52,25 @@ jobs:
 
       - name: Set environment variables
         run: |
+          export CMAKE_PREFIX_PATH=${CONDA_PREFIX:-"$(dirname $(which conda))/../"}
+          export MAX_JOBS=1
           export USE_CUDA=1
-          echo $USE_CUDA
           export USE_CUDNN=1
-          echo $USE_CUDNN
           export CUDA_HOME=${{steps.cuda-toolkit.outputs.CUDA_PATH}}
-          echo $CUDA_HOME
           export CUDNN_INCLUDE_DIR="$CONDA/envs/pipeswitch/include"
-          echo $CUDNN_INCLUDE_DIR
           export CUDNN_LIB_DIR="$CONDA/envs/pipeswitch/lib"
-          echo $CUDNN_LIB_DIR
 
       - name: Clone and build PyTorch
         run: |
           git clone https://github.com/pytorch/pytorch.git
           cd pytorch
           git checkout v1.11.0
-          git submodule sync
-          git submodule update --init --recursive --jobs 0
-          export CMAKE_PREFIX_PATH=${CONDA_PREFIX:-"$(dirname $(which conda))/../"}
-          python3 setup.py install
+          git submodule sync --quiet
+          git submodule update --init --recursive --jobs 0 --quiet
+          python setup.py install
           chmod +x ${{github.workspace}}/pytorch_plugins/overwrite.sh
           bash ${{github.workspace}}/pytorch_plugins/overwrite.sh .
-          python3 setup.py install
+          python setup.py install
           export PYTHONPATH=$PYTHONPATH:$PWD
           source $HOME/.bashrc
 
