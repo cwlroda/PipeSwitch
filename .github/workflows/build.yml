@@ -30,9 +30,9 @@ jobs:
 
       - name: Test CUDA installation
         run: |
-        echo "Installed CUDA version is: ${{steps.cuda-toolkit.outputs.cuda}}"
-        echo "CUDA install location: ${{steps.cuda-toolkit.outputs.CUDA_PATH}}"
-        nvcc -V
+          echo "Installed CUDA version is: ${{steps.cuda-toolkit.outputs.cuda}}"
+          echo "CUDA install location: ${{steps.cuda-toolkit.outputs.CUDA_PATH}}"
+          nvcc -V
 
       - uses: conda-incubator/setup-miniconda@v2.1.1
         with:
