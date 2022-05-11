@@ -70,7 +70,7 @@ jobs:
       - name: Set environment variables
         run: |
           export CMAKE_PREFIX_PATH=${CONDA_PREFIX:-"$(dirname $(which conda))/../"}
-          export MAX_JOBS=$(nproc)
+          export MAX_JOBS=1
           export BUILD_TEST=1
           export USE_CUDA=1
           export USE_CUDNN=1
