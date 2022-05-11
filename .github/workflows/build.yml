@@ -26,7 +26,7 @@ jobs:
       - name: Install apt dependencies
         run: |
           sudo apt-get update -qq && sudo apt-get upgrade -qq -y
-          sudo apt-get -qq install -y build-essential cmake unzip pkg-config
+          sudo apt-get -qq install -y build-essential cmake unzip pkg-config wget
           sudo apt-get -qq install -y libxmu-dev libxi-dev libglu1-mesa libglu1-mesa-dev
           sudo apt-get -qq install -y libjpeg-dev libpng-dev libtiff-dev
           sudo apt-get -qq install -y libavcodec-dev libavformat-dev libswscale-dev libv4l-dev
@@ -90,7 +90,6 @@ jobs:
           bash ${{github.workspace}}/pytorch_plugins/overwrite.sh .
           python setup.py install
           export PYTHONPATH=$PYTHONPATH:$PWD
-          source $HOME/.bashrc
 
       - name: Test PyTorch installation
         run: |
