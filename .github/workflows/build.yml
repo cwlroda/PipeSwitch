@@ -44,35 +44,35 @@ jobs:
           sudo apt-get -qq install -y linux-source linux-headers-generic
           sudo apt-get -qq install -y protobuf-compiler
 
-      - name: Download Ninja and CMake
-        id: cmake_and_ninja
-        shell: cmake -P {0}
-        run: |
-          set(ninja_version "1.10.2")
-          set(cmake_version "3.23.1")
+      # - name: Download Ninja and CMake
+      #   id: cmake_and_ninja
+      #   shell: cmake -P {0}
+      #   run: |
+      #     set(ninja_version "1.10.2")
+      #     set(cmake_version "3.23.1")
 
-          message(STATUS "Using host CMake version: ${CMAKE_VERSION}")
+      #     message(STATUS "Using host CMake version: ${CMAKE_VERSION}")
 
-          set(ninja_suffix "linux.zip")
-          set(cmake_suffix "Linux-x86_64.tar.gz")
-          set(cmake_dir "cmake-${cmake_version}-Linux-x86_64/bin")
+      #     set(ninja_suffix "linux.zip")
+      #     set(cmake_suffix "Linux-x86_64.tar.gz")
+      #     set(cmake_dir "cmake-${cmake_version}-Linux-x86_64/bin")
 
-          set(ninja_url "https://github.com/ninja-build/ninja/releases/download/v${ninja_version}/ninja-${ninja_suffix}")
-          file(DOWNLOAD "${ninja_url}" ./ninja.zip SHOW_PROGRESS)
-          execute_process(COMMAND ${CMAKE_COMMAND} -E tar xvf ./ninja.zip)
+      #     set(ninja_url "https://github.com/ninja-build/ninja/releases/download/v${ninja_version}/ninja-${ninja_suffix}")
+      #     file(DOWNLOAD "${ninja_url}" ./ninja.zip SHOW_PROGRESS)
+      #     execute_process(COMMAND ${CMAKE_COMMAND} -E tar xvf ./ninja.zip)
 
-          set(cmake_url "https://github.com/Kitware/CMake/releases/download/v${cmake_version}/cmake-${cmake_version}-${cmake_suffix}")
-          file(DOWNLOAD "${cmake_url}" ./cmake.zip SHOW_PROGRESS)
-          execute_process(COMMAND ${CMAKE_COMMAND} -E tar xvf ./cmake.zip)
+      #     set(cmake_url "https://github.com/Kitware/CMake/releases/download/v${cmake_version}/cmake-${cmake_version}-${cmake_suffix}")
+      #     file(DOWNLOAD "${cmake_url}" ./cmake.zip SHOW_PROGRESS)
+      #     execute_process(COMMAND ${CMAKE_COMMAND} -E tar xvf ./cmake.zip)
 
-          # Save the path for other steps
-          file(TO_CMAKE_PATH "$ENV{GITHUB_WORKSPACE}/${cmake_dir}" cmake_dir)
-          message("::set-output name=cmake_dir::${cmake_dir}")
+      #     # Save the path for other steps
+      #     file(TO_CMAKE_PATH "$ENV{GITHUB_WORKSPACE}/${cmake_dir}" cmake_dir)
+      #     message("::set-output name=cmake_dir::${cmake_dir}")
 
-          execute_process(
-            COMMAND chmod +x ninja
-            COMMAND chmod +x ${cmake_dir}/cmake
-          )
+      #     execute_process(
+      #       COMMAND chmod +x ninja
+      #       COMMAND chmod +x ${cmake_dir}/cmake
+      #     )
 
       # - name: Install CUDA
       #   uses: Jimver/cuda-toolkit@v0.2.5
@@ -104,31 +104,31 @@ jobs:
         run: |
           conda info
           conda list
+          locate cudnn
 
-      - name: Set environment variables
-        run: |
-          export CMAKE_PREFIX_PATH=${CONDA_PREFIX:-"$(dirname $(which conda))/../"}
-          export MAX_JOBS=1
-          # export BUILD_TEST=1
-          # export USE_CUDA=1
-          # export USE_CUDNN=1
-          # export PATH="${{steps.cuda-toolkit.outputs.CUDA_PATH}}/bin${PATH:+:${PATH}}"
-          # export LD_LIBRARY_PATH="${{steps.cuda-toolkit.outputs.CUDA_PATH}}/lib64${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
-          # export CUDA_HOME="/usr/local/cuda"
-          # export CUDNN_INCLUDE_DIR="$CONDA/envs/pipeswitch/include"
-          # export CUDNN_LIB_DIR="$CONDA/envs/pipeswitch/lib"
+      # - name: Set environment variables
+      #   run: |
+      #     export CMAKE_PREFIX_PATH=${CONDA_PREFIX:-"$(dirname $(which conda))/../"}
+      #     export MAX_JOBS=1
+      #     export USE_CUDA=1
+      #     export USE_CUDNN=1
+      #     export PATH="${{steps.cuda-toolkit.outputs.CUDA_PATH}}/bin${PATH:+:${PATH}}"
+      #     export LD_LIBRARY_PATH="${{steps.cuda-toolkit.outputs.CUDA_PATH}}/lib64${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
+      #     export CUDA_HOME="/usr/local/cuda"
+      #     export CUDNN_INCLUDE_DIR="$CONDA/envs/pipeswitch/include"
+      #     export CUDNN_LIB_DIR="$CONDA/envs/pipeswitch/lib"
 
-      - name: Clone and build PyTorch
-        run: |
-          wget https://github.com/pytorch/pytorch/releases/download/v1.11.0/pytorch-v1.11.0.tar.gz
-          tar -xzf pytorch-v1.11.0.tar.gz
-          cd pytorch-v1.11.0
-          python setup.py install
-          chmod +x ${{github.workspace}}/pytorch_plugins/overwrite.sh
-          bash ${{github.workspace}}/pytorch_plugins/overwrite.sh .
-          python setup.py install
-          export PYTHONPATH=$PYTHONPATH:$PWD
+      # - name: Clone and build PyTorch
+      #   run: |
+      #     wget https://github.com/pytorch/pytorch/releases/download/v1.11.0/pytorch-v1.11.0.tar.gz
+      #     tar -xzf pytorch-v1.11.0.tar.gz
+      #     cd pytorch-v1.11.0
+      #     python setup.py install
+      #     chmod +x ${{github.workspace}}/pytorch_plugins/overwrite.sh
+      #     bash ${{github.workspace}}/pytorch_plugins/overwrite.sh .
+      #     python setup.py install
+      #     export PYTHONPATH=$PYTHONPATH:$PWD
 
-      - name: Test PyTorch installation
-        run: |
-          python3 ${{github.workspace}}/test/pt.py
+      # - name: Test PyTorch installation
+      #   run: |
+      #     python3 ${{github.workspace}}/test/pt.py
