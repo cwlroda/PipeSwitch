@@ -80,7 +80,7 @@ jobs:
         id: cuda-toolkit
         with:
           cuda: "11.2.2"
-        linux-local-args: '["--toolkit"]'
+          linux-local-args: '["--toolkit"]'
 
       - name: Test CUDA installation
         run: |
