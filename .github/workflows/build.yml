@@ -45,6 +45,7 @@ jobs:
           wget https://developer.download.nvidia.com/compute/redist/cudnn/v8.1.1/cudnn-11.2-linux-x64-v8.1.1.33.tgz
           tar -xzf cudnn-11.2-linux-x64-v8.1.1.33.tgz
           sudo cp -P cuda/include/cudnn.h ${{steps.cuda-toolkit.outputs.CUDA_PATH}}/include
+          sudo cp -P cuda/include/cudnn_version.h ${{steps.cuda-toolkit.outputs.CUDA_PATH}}/include
           sudo cp -P cuda/lib64/libcudnn* ${{steps.cuda-toolkit.outputs.CUDA_PATH}}/lib64/
           sudo chmod a+r ${{steps.cuda-toolkit.outputs.CUDA_PATH}}/lib64/libcudnn*
 
