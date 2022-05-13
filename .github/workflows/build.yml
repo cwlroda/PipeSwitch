@@ -80,11 +80,6 @@ jobs:
           export PATH="${{steps.cuda-toolkit.outputs.CUDA_PATH}}/bin${PATH:+:${PATH}}"
           export LD_LIBRARY_PATH="${{steps.cuda-toolkit.outputs.CUDA_PATH}}/lib64${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
           export CUDA_HOME="/usr/local/cuda"
-          export CUDNN_INCLUDE_DIR="$CONDA/envs/pipeswitch/include"
-          export CUDNN_INCLUDE_PATH="$CONDA/envs/pipeswitch/include"
-          export CUDNN_LIB_DIR="$CONDA/envs/pipeswitch/lib"
-          export CUDNN_LIBRARY_PATH="$CONDA/envs/pipeswitch/lib"
-          export CUDNN_LIBRARY="$CONDA/envs/pipeswitch/lib"
 
       - name: Clone and build PyTorch
         run: |
