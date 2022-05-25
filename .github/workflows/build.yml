@@ -42,7 +42,7 @@ jobs:
 
       - name: Install CUDNN
         run: |
-          wget https://developer.download.nvidia.com/compute/redist/cudnn/v8.1.1/cudnn-11.2-linux-x64-v8.1.1.33.tgz
+          wget -q https://developer.download.nvidia.com/compute/redist/cudnn/v8.1.1/cudnn-11.2-linux-x64-v8.1.1.33.tgz
           tar -xzf cudnn-11.2-linux-x64-v8.1.1.33.tgz
           sudo cp -P cuda/include/cudnn.h ${{steps.cuda-toolkit.outputs.CUDA_PATH}}/include
           sudo cp -P cuda/include/cudnn_version.h ${{steps.cuda-toolkit.outputs.CUDA_PATH}}/include
@@ -76,6 +76,7 @@ jobs:
       - name: Set environment variables
         run: |
           export CMAKE_PREFIX_PATH=${CONDA_PREFIX:-"$(dirname $(which conda))/../"}
+          export MAX_JOBS=1
           export USE_CUDA=1
           export USE_CUDNN=1
           export PATH="${{steps.cuda-toolkit.outputs.CUDA_PATH}}/bin${PATH:+:${PATH}}"
@@ -84,7 +85,7 @@ jobs:
 
       - name: Clone and build PyTorch
         run: |
-          wget https://github.com/pytorch/pytorch/releases/download/v1.11.0/pytorch-v1.11.0.tar.gz
+          wget -q https://github.com/pytorch/pytorch/releases/download/v1.11.0/pytorch-v1.11.0.tar.gz
           tar -xzf pytorch-v1.11.0.tar.gz
           cd pytorch-v1.11.0
           python setup.py install
