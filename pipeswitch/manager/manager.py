@@ -11,8 +11,8 @@ from pipeswitch.manager.gpu_resource_allocator import GPUResourceAllocator
 from pipeswitch.manager.servers import RequestsServer, RunnersServer
 from pipeswitch.manager.scheduler import Scheduler
 
-from pipeswitch.frontend_schedule import FrontendScheduleThd
-from pipeswitch.worker import WorkerProc
+from pipeswitch.runner.frontend_schedule import FrontendScheduleThd
+from pipeswitch.runner.worker import WorkerProc
 
 
 class ManagerThd(threading.Thread):
