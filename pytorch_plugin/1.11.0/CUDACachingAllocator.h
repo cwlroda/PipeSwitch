@@ -161,11 +161,16 @@ C10_CUDA_API Allocator* get();
 C10_CUDA_API void init(int device_count);
 C10_CUDA_API void setMemoryFraction(double fraction, int device);
 C10_CUDA_API void emptyCache();
-C10_CUDA_API void allocateSharedCache(); // PipeSwitch
-C10_CUDA_API void sendSharedCache(); // PipeSwitch
-C10_CUDA_API void recvSharedCache(); // PipeSwitch
-C10_CUDA_API void insertSharedCache(size_t size, size_t offset); // PipeSwitch
-C10_CUDA_API void clearSharedCache(); // PipeSwitch
+C10_CUDA_API void initSharedPtr(int device); // PipeSwitch
+C10_CUDA_API void initSharedCacheHandle(int device); // PipeSwitch
+C10_CUDA_API void allocateSharedCache(int device); // PipeSwitch
+C10_CUDA_API void sendSharedCache(int device); // PipeSwitch
+C10_CUDA_API void recvSharedCache(int device); // PipeSwitch
+C10_CUDA_API void insertSharedCache(
+    size_t size,
+    size_t offset,
+    int device); // PipeSwitch
+C10_CUDA_API void clearSharedCache(int device); // PipeSwitch
 C10_CUDA_API void cacheInfo(
     int dev_id,
     size_t* cachedAndFree,

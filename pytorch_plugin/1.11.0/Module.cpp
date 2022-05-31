@@ -334,25 +334,26 @@ PyObject* THCPModule_emptyCache(PyObject* _unused, PyObject* noargs) {
 }
 
 // PipeSwitch
-PyObject* THCPModule_allocateSharedCache(PyObject* _unused, PyObject* noargs) {
+PyObject* THCPModule_allocateSharedCache(PyObject* _unused, PyObject* arg) {
   HANDLE_TH_ERRORS
-  c10::cuda::CUDACachingAllocator::allocateSharedCache();
+  c10::cuda::CUDACachingAllocator::allocateSharedCache(
+      THPUtils_unpackLong(arg));
   END_HANDLE_TH_ERRORS
   Py_RETURN_NONE;
 }
 
 // PipeSwitch
-PyObject* THCPModule_sendSharedCache(PyObject* _unused, PyObject* noargs) {
+PyObject* THCPModule_sendSharedCache(PyObject* _unused, PyObject* arg) {
   HANDLE_TH_ERRORS
-  c10::cuda::CUDACachingAllocator::sendSharedCache();
+  c10::cuda::CUDACachingAllocator::sendSharedCache(THPUtils_unpackLong(arg));
   END_HANDLE_TH_ERRORS
   Py_RETURN_NONE;
 }
 
 // PipeSwitch
-PyObject* THCPModule_recvSharedCache(PyObject* _unused, PyObject* noargs) {
+PyObject* THCPModule_recvSharedCache(PyObject* _unused, PyObject* arg) {
   HANDLE_TH_ERRORS
-  c10::cuda::CUDACachingAllocator::recvSharedCache();
+  c10::cuda::CUDACachingAllocator::recvSharedCache(THPUtils_unpackLong(arg));
   END_HANDLE_TH_ERRORS
   Py_RETURN_NONE;
 }
@@ -360,10 +361,10 @@ PyObject* THCPModule_recvSharedCache(PyObject* _unused, PyObject* noargs) {
 // PipeSwitch
 PyObject* THCPModule_insertSharedCacheForParameter(
     PyObject* _unused,
-    PyObject* noargs) {
+    PyObject* arg) {
   HANDLE_TH_ERRORS
   c10::cuda::CUDACachingAllocator::insertSharedCache(
-      1UL * 1024UL * 1024UL * 1024UL, 0);
+      1UL * 1024UL * 1024UL * 1024UL, 0, THPUtils_unpackLong(arg));
   END_HANDLE_TH_ERRORS
   Py_RETURN_NONE;
 }
@@ -371,20 +372,21 @@ PyObject* THCPModule_insertSharedCacheForParameter(
 // PipeSwitch
 PyObject* THCPModule_insertSharedCacheForComputation(
     PyObject* _unused,
-    PyObject* noargs) {
+    PyObject* arg) {
   HANDLE_TH_ERRORS
   c10::cuda::CUDACachingAllocator::insertSharedCache(
       static_cast<size_t>(ceil(2.0 / 3.0 * GPU_MEM_LIMIT_GB - 1)) * 1024UL *
           1024UL * 1024UL,
-      1UL * 1024UL * 1024UL * 1024UL);
+      1UL * 1024UL * 1024UL * 1024UL,
+      THPUtils_unpackLong(arg));
   END_HANDLE_TH_ERRORS
   Py_RETURN_NONE;
 }
 
 // PipeSwitch
-PyObject* THCPModule_clearSharedCache(PyObject* _unused, PyObject* noargs) {
+PyObject* THCPModule_clearSharedCache(PyObject* _unused, PyObject* arg) {
   HANDLE_TH_ERRORS
-  c10::cuda::CUDACachingAllocator::clearSharedCache();
+  c10::cuda::CUDACachingAllocator::clearSharedCache(THPUtils_unpackLong(arg));
   END_HANDLE_TH_ERRORS
   Py_RETURN_NONE;
 }
@@ -696,27 +698,27 @@ static struct PyMethodDef _THCPModule_methods[] = {
     {"_cuda_emptyCache", THCPModule_emptyCache, METH_NOARGS, nullptr},
     {"_cuda_allocateSharedCache",
      (PyCFunction)THCPModule_allocateSharedCache,
-     METH_NOARGS,
+     METH_O,
      nullptr}, // PipeSwitch
     {"_cuda_sendSharedCache",
      (PyCFunction)THCPModule_sendSharedCache,
-     METH_NOARGS,
+     METH_O,
      nullptr}, // PipeSwitch
     {"_cuda_recvSharedCache",
      (PyCFunction)THCPModule_recvSharedCache,
-     METH_NOARGS,
+     METH_O,
      nullptr}, // PipeSwitch
     {"_cuda_insertSharedCacheForParameter",
      (PyCFunction)THCPModule_insertSharedCacheForParameter,
-     METH_NOARGS,
+     METH_O,
      nullptr}, // PipeSwitch
     {"_cuda_insertSharedCacheForComputation",
      (PyCFunction)THCPModule_insertSharedCacheForComputation,
-     METH_NOARGS,
+     METH_O,
      nullptr}, // PipeSwitch
     {"_cuda_clearSharedCache",
      (PyCFunction)THCPModule_clearSharedCache,
-     METH_NOARGS,
+     METH_O,
      nullptr}, // PipeSwitch
     {"_cuda_memoryStats", THCPModule_memoryStats, METH_O, nullptr},
     {"_cuda_resetAccumulatedMemoryStats",

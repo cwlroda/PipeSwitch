@@ -1402,7 +1402,8 @@ class THCCachingAllocator {
   }
 
   // PipeSwitch: Pre-allocated shared GPU memory
-  void* PIPESWITCH_shared_ptr = nullptr;
+  std::vector<void*> PIPESWITCH_shared_ptr_list;
+  std::vector<cudaIpcMemHandle_t> shared_cache_handle_list;
   // size_t allocated_size = 0;
 
  public:
@@ -1486,11 +1487,38 @@ class THCCachingAllocator {
       da->emptyCache();
   }
 
+  /* PipeSwitch */
+  void initSharedPtr(int device) {
+    // int device = 0;
+    // C10_CUDA_CHECK(cudaGetDevice(&device));
+    if (PIPESWITCH_shared_ptr_list.size() <= device) {
+      PIPESWITCH_shared_ptr_list.resize(device + 1);
+      PIPESWITCH_shared_ptr_list[device] = nullptr;
+    }
+  }
+
+  /* PipeSwitch */
+  void initSharedCacheHandle(int device) {
+    // int device = 0;
+    // C10_CUDA_CHECK(cudaGetDevice(&device));
+    if (shared_cache_handle_list.size() <= device) {
+      shared_cache_handle_list.resize(device + 1);
+      cudaIpcMemHandle_t handle;
+      shared_cache_handle_list[device] = handle;
+    }
+  }
+
   /* PipeSwitch: allocate shared GPU memory */
-  void allocateSharedCache() {
+  void allocateSharedCache(int device) {
     std::lock_guard<std::recursive_mutex> lock(mutex);
+    // int device = 0;
+    // C10_CUDA_CHECK(cudaGetDevice(&device));
+    initSharedPtr(device);
+    initSharedCacheHandle(device);
+
     cudaError_t err = cudaMalloc(
-        &PIPESWITCH_shared_ptr, static_cast<size_t>(SIZE_SHARED_CACHE));
+        &(PIPESWITCH_shared_ptr_list[device]),
+        static_cast<size_t>(SIZE_SHARED_CACHE));
     if (err != cudaSuccess) {
       perror("allocate_shared_cache");
       exit(EXIT_FAILURE);
@@ -1498,13 +1526,17 @@ class THCCachingAllocator {
   }
 
   /* PipeSwitch: send shared GPU memory */
-  void sendSharedCache() {
+  void sendSharedCache(int device) {
     std::lock_guard<std::recursive_mutex> lock(mutex);
-    cudaIpcMemHandle_t shared_cache_handle;
+    // int device = 0;
+    // C10_CUDA_CHECK(cudaGetDevice(&device));
+    initSharedPtr(device);
+    initSharedCacheHandle(device);
 
     // Pack CUDA pointer
-    cudaError_t err =
-        cudaIpcGetMemHandle(&shared_cache_handle, PIPESWITCH_shared_ptr);
+    cudaError_t err = cudaIpcGetMemHandle(
+        &(shared_cache_handle_list[device]),
+        PIPESWITCH_shared_ptr_list[device]);
     if (err != cudaSuccess) {
       perror("pack_shared_cache");
       exit(EXIT_FAILURE);
@@ -1547,16 +1579,22 @@ class THCCachingAllocator {
     }
 
     // Send the packed pointer
-    write(conn_fd, (void*)(&shared_cache_handle), sizeof(cudaIpcMemHandle_t));
+    write(
+        conn_fd,
+        (void*)(&(shared_cache_handle_list[device])),
+        sizeof(cudaIpcMemHandle_t));
 
     close(conn_fd);
     close(server_fd);
   }
 
   /* PipeSwitch: recv shared GPU memory */
-  void recvSharedCache() {
+  void recvSharedCache(int device) {
     std::lock_guard<std::recursive_mutex> lock(mutex);
-    cudaIpcMemHandle_t shared_cache_handle;
+    // int device = 0;
+    // C10_CUDA_CHECK(cudaGetDevice(&device));
+    initSharedPtr(device);
+    initSharedCacheHandle(device);
 
     // Connect
     int conn_fd = 0;
@@ -1577,12 +1615,15 @@ class THCCachingAllocator {
     }
 
     // Receive packed pointer
-    read(conn_fd, (void*)(&shared_cache_handle), sizeof(cudaIpcMemHandle_t));
+    read(
+        conn_fd,
+        (void*)(&(shared_cache_handle_list[device])),
+        sizeof(cudaIpcMemHandle_t));
 
     // Extract the pointer
     cudaError_t err = cudaIpcOpenMemHandle(
-        &PIPESWITCH_shared_ptr,
-        shared_cache_handle,
+        &(PIPESWITCH_shared_ptr_list[device]),
+        shared_cache_handle_list[device],
         cudaIpcMemLazyEnablePeerAccess);
     if (err != cudaSuccess) {
       perror("extract_shared_cache");
@@ -1593,16 +1634,18 @@ class THCCachingAllocator {
   }
 
   /* PipeSwitch: insert shared GPU memory to large block pool */
-  void insertSharedCache(size_t size, size_t offset) {
+  void insertSharedCache(size_t size, size_t offset, int device) {
     std::lock_guard<std::recursive_mutex> lock(mutex);
-    int device = 0;
-    C10_CUDA_CHECK(cudaGetDevice(&device));
+    // int device = 0;
+    // C10_CUDA_CHECK(cudaGetDevice(&device));
+    initSharedPtr(device);
+    initSharedCacheHandle(device);
     Block* block = new Block(
         device,
         cuda::getCurrentCUDAStream(static_cast<c10::DeviceIndex>(device)),
         size,
         &large_blocks,
-        static_cast<char*>(PIPESWITCH_shared_ptr) + offset);
+        static_cast<char*>(PIPESWITCH_shared_ptr_list[device]) + offset);
     // allocated_size += size;
     large_blocks.blocks.insert(block);
 
@@ -1611,11 +1654,12 @@ class THCCachingAllocator {
   }
 
   /* PipeSwitch: clear shared GPU memory */
-  void clearSharedCache() {
+  void clearSharedCache(int device) {
     std::lock_guard<std::recursive_mutex> lock(mutex);
-
-    int device = 0;
-    C10_CUDA_CHECK(cudaGetDevice(&device));
+    // int device = 0;
+    // C10_CUDA_CHECK(cudaGetDevice(&device));
+    initSharedPtr(device);
+    initSharedCacheHandle(device);
     cudaStream_t stream =
         cuda::getCurrentCUDAStream(static_cast<c10::DeviceIndex>(device));
 
@@ -1760,28 +1804,28 @@ void emptyCache() {
 }
 
 // PipeSwitch
-void allocateSharedCache() {
-  caching_allocator.allocateSharedCache();
+void allocateSharedCache(int device) {
+  caching_allocator.allocateSharedCache(device);
 }
 
 // PipeSwitch
-void sendSharedCache() {
-  caching_allocator.sendSharedCache();
+void sendSharedCache(int device) {
+  caching_allocator.sendSharedCache(device);
 }
 
 // PipeSwitch
-void recvSharedCache() {
-  caching_allocator.recvSharedCache();
+void recvSharedCache(int device) {
+  caching_allocator.recvSharedCache(device);
 }
 
 // PipeSwitch
-void insertSharedCache(size_t size, size_t offset) {
-  caching_allocator.insertSharedCache(size, offset);
+void insertSharedCache(size_t size, size_t offset, int device) {
+  caching_allocator.insertSharedCache(size, offset, device);
 }
 
 // PipeSwitch
-void clearSharedCache() {
-  caching_allocator.clearSharedCache();
+void clearSharedCache(int device) {
+  caching_allocator.clearSharedCache(device);
 }
 
 void cacheInfo(int dev_id, size_t* cachedAndFree, size_t* largestBlock) {

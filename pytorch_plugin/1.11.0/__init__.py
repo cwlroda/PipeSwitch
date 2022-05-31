@@ -672,39 +672,39 @@ def utilization(device: Optional[Union[Device, int]] = None) -> int:
 
 
 # PipeSwitch
-def allocate_shared_cache():
+def allocate_shared_cache(device):
     if _initialized:
-        torch._C._cuda_allocateSharedCache()
+        torch._C._cuda_allocateSharedCache(device)
 
 
 # PipeSwitch
-def send_shared_cache():
+def send_shared_cache(device):
     if _initialized:
-        torch._C._cuda_sendSharedCache()
+        torch._C._cuda_sendSharedCache(device)
 
 
 # PipeSwitch
-def recv_shared_cache():
+def recv_shared_cache(device):
     if _initialized:
-        torch._C._cuda_recvSharedCache()
+        torch._C._cuda_recvSharedCache(device)
 
 
 # PipeSwitch
-def insert_shared_cache_for_parameter():
+def insert_shared_cache_for_parameter(device):
     if _initialized:
-        torch._C._cuda_insertSharedCacheForParameter()
+        torch._C._cuda_insertSharedCacheForParameter(device)
 
 
 # PipeSwitch
-def insert_shared_cache_for_computation():
+def insert_shared_cache_for_computation(device):
     if _initialized:
-        torch._C._cuda_insertSharedCacheForComputation()
+        torch._C._cuda_insertSharedCacheForComputation(device)
 
 
 # PipeSwitch
-def clear_shared_cache():
+def clear_shared_cache(device):
     if _initialized:
-        torch._C._cuda_clearSharedCache()
+        torch._C._cuda_clearSharedCache(device)
 
 
 from .memory import *  # noqa: F403
