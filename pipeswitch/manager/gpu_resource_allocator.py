@@ -8,7 +8,7 @@ import torch
 class GPUResourceAllocator:
     def __init__(self):
         self.gpus = self.get_gpus()
-        # self.cuda_init()
+        self.cuda_init()
 
     def cuda_init(self):
         assert torch.cuda.is_available()
@@ -52,14 +52,14 @@ class GPUResourceAllocator:
             )
 
         available_gpus = free_gpus[:num_gpus]
-        # gpus = ",".join([str(i) for i in available_gpus])
+        gpus = ",".join([str(i) for i in available_gpus])
         os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
-        # os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
-        # os.environ["CUDA_VISIBLE_DEVICES"] = gpus
+        os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+        os.environ["CUDA_VISIBLE_DEVICES"] = gpus
 
-        # logger.info("Acquiring GPUs: %s" % os.environ["CUDA_VISIBLE_DEVICES"])
-        # for id in available_gpus:
-        #     self._check_gpu(id)
+        logger.debug("Acquiring GPUs: %s" % os.environ["CUDA_VISIBLE_DEVICES"])
+        for id in available_gpus:
+            self._check_gpu(id)
         return available_gpus
 
     def warmup_gpus(self):
@@ -67,7 +67,7 @@ class GPUResourceAllocator:
             torch.cuda.set_device(id)
             torch.randn(1024, device=f"cuda:{id}")
             torch.cuda.allocate_shared_cache(id)
-            logger.info(f"Allocated shared cache for GPU {id}")
+            logger.debug(f"Allocated shared cache for GPU {id}")
 
     def release_gpus(self):
         os.environ["CUDA_VISIBLE_DEVICES"] = ""

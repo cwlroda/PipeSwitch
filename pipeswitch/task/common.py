@@ -2,14 +2,16 @@ import torch
 
 kMinBlockSize = 512
 
+
 def set_fullname(mod, fullname):
     mod.fullname = fullname
     if len(list(mod.children())) == 0:
         for index, p in enumerate(mod.parameters()):
-            p.reserved_name = '%s->p%d' % (fullname, index)
+            p.reserved_name = "%s->p%d" % (fullname, index)
     for child_name, child in mod.named_children():
-        child_fullname = '%s->%s' % (fullname, child_name)
+        child_fullname = "%s->%s" % (fullname, child_name)
         set_fullname(child, child_fullname)
+
 
 def group_to_shape(group):
     shape_list = []
@@ -23,6 +25,7 @@ def group_to_shape(group):
         else:
             for child in mod.children():
                 travel_layer(child)
+
     for mod in group:
         travel_layer(mod)
 
@@ -37,14 +40,17 @@ def group_to_shape(group):
                 buf_list.append((mod, key))
     return shape_list, param_list, buf_list, mod_list
 
+
 def group_to_batch(group):
     mod_list = []
+
     def travel_layer(mod):
         if len(list(mod.children())) == 0:
             mod_list.append(mod)
         else:
             for child in mod.children():
                 travel_layer(child)
+
     for mod in group:
         travel_layer(mod)
 
@@ -65,12 +71,14 @@ def group_to_batch(group):
         for _, buf in mod._buffers.items():
             if buf is not None and buf.dtype is torch.float32:
                 tensor_list.append(pad(buf.view(-1), kMinBlockSize))
-    
+
     if len(tensor_list) > 0:
         batched_tensor = torch.cat(tensor_list)
     else:
         batched_tensor = None
 
-    modname_list = [mod.fullname for mod in mod_list]
+    modname_list = [
+        mod.fullname if hasattr(mod, "fullname") else None for mod in mod_list
+    ]
 
     return batched_tensor, modname_list

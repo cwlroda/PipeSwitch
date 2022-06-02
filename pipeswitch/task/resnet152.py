@@ -2,7 +2,7 @@ import os
 
 import torch
 
-import task.common as util
+import pipeswitch.task.common as util
 
 MODEL_NAME = "resnet152"
 
@@ -50,6 +50,7 @@ def import_model():
     return model
 
 
+# TODO: figure out how model partitioning works
 def partition_model(model):
     group_list = []
     before_core = []
@@ -58,9 +59,11 @@ def partition_model(model):
 
     group_list.append(before_core)
     for name, child in model.named_children():
+        # print(f"child: {name}, {child}")
         if "layer" in name:
             core_complete = True
-            for _, child_child in child.named_children():
+            for name_name, child_child in child.named_children():
+                # print(f"child_child: {name_name}, {child_child}")
                 group_list.append([child_child])
         else:
             if not core_complete:

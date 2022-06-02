@@ -3,23 +3,26 @@ import time
 import torch
 import torch.nn as nn
 
-import task.resnet152 as resnet152
-import task.common as util
+import pipeswitch.task.resnet152 as resnet152
+import pipeswitch.task.common as util
 
-TASK_NAME = 'resnet152_training'
+TASK_NAME = "resnet152_training"
+
 
 def import_data_loader():
     return resnet152.import_data
+
 
 def import_model():
     model = resnet152.import_model()
     model.train()
     return model
 
+
 def import_func():
     def train(model, data_loader):
         # Prepare data
-        #batch_size = 32
+        # batch_size = 32
         batch_size = 8
         images, target = data_loader(batch_size)
 
@@ -28,7 +31,9 @@ def import_func():
         momentum = 0.9
         weight_decay = 1e-4
         criterion = nn.CrossEntropyLoss().cuda()
-        optimizer = torch.optim.SGD(model.parameters(), lr, momentum=momentum, weight_decay=weight_decay)
+        optimizer = torch.optim.SGD(
+            model.parameters(), lr, momentum=momentum, weight_decay=weight_decay
+        )
 
         loss = None
         for i in range(10):
@@ -45,12 +50,14 @@ def import_func():
             loss.backward()
             optimizer.step()
 
-            print ('Training', i, time.time(), loss.item())
+            print("Training", i, time.time(), loss.item())
             del images_cuda
             del target_cuda
-        
+
         return loss.item()
+
     return train
+
 
 def import_task():
     model = import_model()
@@ -58,6 +65,7 @@ def import_task():
     group_list = resnet152.partition_model(model)
     shape_list = [util.group_to_shape(group) for group in group_list]
     return model, func, shape_list
+
 
 def import_parameters():
     model = import_model()

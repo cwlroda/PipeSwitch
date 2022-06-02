@@ -1,8 +1,7 @@
 import importlib
-
 import torch
 
-### Class
+
 class ModelSummary:
     def __init__(self, device, model_name, TERMINATE_SIGNAL, param_trans_pipe):
         """ """
@@ -56,7 +55,7 @@ class ModelSummary:
                 self.insert_terminate_hook(child)
 
     def load_model(self):
-        model_module = importlib.import_module("task." + self.model_name)
+        model_module = importlib.import_module("pipeswitch.task." + self.model_name)
         self.model, self.func, self.shape_summary_list = model_module.import_task()
         self.data_loader = model_module.import_data_loader()
 
@@ -86,6 +85,3 @@ class ModelSummary:
                 for shape, b in zip(shape_list[len(param_list) :], buf_list):
                     mod, key = b
                     mod._buffers[key] = torch.empty(shape, device=f"cuda:{self.device}")
-
-
-### Class End

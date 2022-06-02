@@ -1663,14 +1663,14 @@ class THCCachingAllocator {
     cudaStream_t stream =
         cuda::getCurrentCUDAStream(static_cast<c10::DeviceIndex>(device));
 
-    std::cout << "Begin Clear" << std::endl;
+    // std::cout << "Begin Clear" << std::endl;
     auto it = large_blocks.blocks.begin();
     while (it != large_blocks.blocks.end()) {
       Block* block = *it;
       if (block->stream == stream && !block->prev && !block->next) {
-        std::cout << "Clear"
-                  << ", " << block->ptr << ", " << block->size << ", "
-                  << block->allocated << std::endl;
+        // std::cout << "Clear"
+        //           << ", " << block->ptr << ", " << block->size << ", "
+        //           << block->allocated << std::endl;
         getDeviceStats(block->device).decreaseCached(block->size);
 
         auto cur = it;
@@ -1681,7 +1681,7 @@ class THCCachingAllocator {
         ++it;
       }
     }
-    std::cout << "End Clear" << std::endl;
+    // std::cout << "End Clear" << std::endl;
     // allocated_size = 0;
   }
 
