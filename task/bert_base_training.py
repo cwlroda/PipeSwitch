@@ -1,25 +1,27 @@
 import time
 
+import task.bert_base as bert_base
+import task.common as util
 import torch
 import torch.nn as nn
 
-import task.bert_base as bert_base
-import task.common as util
+TASK_NAME = "bert_base_training"
 
-TASK_NAME = 'bert_base_training'
 
 def import_data_loader():
     return bert_base.import_data
+
 
 def import_model():
     model = bert_base.import_model()
     model.train()
     return model
 
+
 def import_func():
     def train(model, data_loader):
         # Prepare data
-        #batch_size = 32
+        # batch_size = 32
         batch_size = 1
         data, target = data_loader(batch_size)
 
@@ -44,15 +46,16 @@ def import_func():
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-            
-            print ('Training', i, time.time(), loss.item())
+
+            print("Training", i, time.time(), loss.item())
             del data_cuda
             del target_0_cuda
             del target_1_cuda
 
         return loss
-    
+
     return train
+
 
 def import_task():
     model = import_model()
@@ -60,6 +63,7 @@ def import_task():
     group_list = bert_base.partition_model(model)
     shape_list = [util.group_to_shape(group) for group in group_list]
     return model, func, shape_list
+
 
 def import_parameters():
     model = import_model()

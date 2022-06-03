@@ -1,6 +1,5 @@
-import torch
-
 import task.common as util
+import torch
 
 from util.util import timestamp
 

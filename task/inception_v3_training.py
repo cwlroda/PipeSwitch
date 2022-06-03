@@ -1,25 +1,27 @@
 import time
 
+import task.common as util
+import task.inception_v3 as inception_v3
 import torch
 import torch.nn as nn
 
-import task.inception_v3 as inception_v3
-import task.common as util
+TASK_NAME = "inception_v3_training"
 
-TASK_NAME = 'inception_v3_training'
 
 def import_data_loader():
     return inception_v3.import_data
+
 
 def import_model():
     model = inception_v3.import_model()
     model.train()
     return model
 
+
 def import_func():
     def train(model, data_loader):
         # Prepare data
-        #batch_size = 32
+        # batch_size = 32
         batch_size = 8
         images, target = data_loader(batch_size)
 
@@ -28,7 +30,9 @@ def import_func():
         momentum = 0.9
         weight_decay = 1e-4
         criterion = nn.CrossEntropyLoss().cuda()
-        optimizer = torch.optim.SGD(model.parameters(), lr, momentum=momentum, weight_decay=weight_decay)
+        optimizer = torch.optim.SGD(
+            model.parameters(), lr, momentum=momentum, weight_decay=weight_decay
+        )
 
         loss = None
         for i in range(100):
@@ -45,9 +49,11 @@ def import_func():
             loss.backward()
             optimizer.step()
 
-            print ('Training', i, time.time(), loss.item())
+            print("Training", i, time.time(), loss.item())
         return loss.item()
+
     return train
+
 
 def import_task():
     model = import_model()

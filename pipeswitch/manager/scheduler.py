@@ -1,66 +1,77 @@
-import jsonpickle
 import threading
+import multiprocessing as mp
 from abc import ABC, abstractmethod
-from collections import OrderedDict
+import jsonpickle  # type: ignore
+from typing import List, OrderedDict
 
-from pipeswitch.common.logger import logger
-from pipeswitch.common.servers import SchedulerCommsServer
 from pipeswitch.common.consts import State
+from pipeswitch.common.logger import logger
+from pipeswitch.common.servers import SchedulerCommsServer, RedisServer
+from pipeswitch.runner.status import RunnerStatus
 
 
 class Policy(ABC):
-    @abstractmethod
-    def __init__(self):
+    def __init__(self) -> None:
         pass
 
-    def selectNext(self):
+    @abstractmethod
+    def select_next(self, runners_list: List[int]) -> int:
         pass
 
 
 class RoundRobinPolicy(Policy):
-    def __init__(self):
-        super(RoundRobinPolicy, self).__init__()
-
-    def select_next(self, runners_list):
+    def select_next(self, runners_list: List[int]) -> int:
         if len(runners_list) == 0:
-            return None
+            return -1
         return runners_list[0]
 
 
 class Scheduler(threading.Thread):
-    def __init__(self):
+    def __init__(self) -> None:
         super(Scheduler, self).__init__()
-        self.policy = RoundRobinPolicy()
-        self.commsServer = SchedulerCommsServer("127.0.0.1", 6379)
-        self.runner_status = OrderedDict()
+        self.policy: Policy = RoundRobinPolicy()
+        self.comms_server: RedisServer = SchedulerCommsServer(
+            host="127.0.0.1", port=6379
+        )
+        self.runner_status: OrderedDict[int, State] = OrderedDict()
 
-    def run(self):
-        self.commsServer.start()
+    def run(self) -> None:
+        self.comms_server.start()
 
         while True:
-            if not self.commsServer.sub_queue.empty():
-                msg = self.commsServer.sub_queue.get()
+            if not self.comms_server.sub_queue.empty():
+                msg: str = self.comms_server.sub_queue.get()
                 try:
-                    status_update = jsonpickle.decode(msg)
-                    logger.debug(
-                        f"Scheduler status update: Runner {status_update.device} {status_update.status}"
-                    )
-                    if status_update.device not in self.runner_status:
-                        self.runner_status[status_update.device] = status_update.status
-                except:
-                    logger.debug(f"Ignoring message: {msg}")
+                    status_update: RunnerStatus = jsonpickle.decode(msg)
+                    if status_update.worker_id == -1:
+                        logger.debug(
+                            "Scheduler status update: Runner"
+                            f" {status_update.device} {status_update.status}"
+                        )
+                        self.runner_status[
+                            status_update.device
+                        ] = status_update.status
+                    else:
+                        logger.debug(f"Ignoring non-runner update msg: {msg}")
+                except TypeError as json_decode_err:
+                    logger.debug(json_decode_err)
+                    logger.debug(f"Ignoring msg: {msg}")
                     continue
 
-    def get_free_runners(self):
-        free_runners = []
-        for id, status in self.runner_status.items():
+    def _get_free_runners(self) -> List[int]:
+        free_runners: List[int] = []
+        for runner_id, status in self.runner_status.items():
             if status == State.IDLE:
-                free_runners.append(id)
+                free_runners.append(runner_id)
         return free_runners
 
-    def schedule(self):
-        free_runners = self.get_free_runners()
-        next_available_runner = self.policy.select_next(free_runners)
-        if next_available_runner is not None:
-            self.runner_status[next_available_runner] = State.BUSY
+    def schedule(self) -> int:
+        free_runners: List[int] = self._get_free_runners()
+        next_available_runner: int = self.policy.select_next(free_runners)
+        if next_available_runner != -1:
+            self.runner_status[next_available_runner] = State.RESERVED
+            logger.debug(
+                f"Scheduler: Next available runner is {next_available_runner}"
+            )
             return next_available_runner
+        return -1

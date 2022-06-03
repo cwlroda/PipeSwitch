@@ -3,8 +3,8 @@ import time
 import torch
 import torch.nn as nn
 
-import pipeswitch.task.resnet152 as resnet152
 import pipeswitch.task.common as util
+import pipeswitch.task.resnet152 as resnet152
 
 TASK_NAME = "resnet152_training"
 

@@ -2,20 +2,18 @@ import argparse
 import os
 import time
 
+import task.common as util
+import task.fsdet as fsdet
 import torch
 import torch.nn as nn
 
-import task.fsdet as fsdet
-import task.common as util
-
 import detectron2.utils.comm as comm
 from detectron2.checkpoint import DetectionCheckpointer
-
 from few_shot_detection.fsdet.config import get_cfg, set_global_cfg
-from few_shot_detection.tools.ckpt_surgery import combine_ckpts, ckpt_surgery
-from few_shot_detection.tools.train_net import Trainer
 from few_shot_detection.fsdet.engine import default_argument_parser, default_setup
 from few_shot_detection.fsdet.evaluation import verify_results
+from few_shot_detection.tools.ckpt_surgery import ckpt_surgery, combine_ckpts
+from few_shot_detection.tools.train_net import Trainer
 
 TASK_NAME = "fsdet_training"
 

@@ -1,4 +1,5 @@
 import importlib
+
 import torch
 
 
@@ -33,7 +34,10 @@ class ModelSummary:
                 def hook_wait_for_parameter_lock(mod, input):
                     if not mod.initialized:
                         complete_name = self.param_trans_pipe.recv()
-                        if hasattr(mod, "fullname") and complete_name != mod.fullname:
+                        if (
+                            hasattr(mod, "fullname")
+                            and complete_name != mod.fullname
+                        ):
                             raise Exception("Invalid complete trans")
                         mod.initialized = True
 
@@ -55,8 +59,14 @@ class ModelSummary:
                 self.insert_terminate_hook(child)
 
     def load_model(self):
-        model_module = importlib.import_module("pipeswitch.task." + self.model_name)
-        self.model, self.func, self.shape_summary_list = model_module.import_task()
+        model_module = importlib.import_module(
+            "pipeswitch.task." + self.model_name
+        )
+        (
+            self.model,
+            self.func,
+            self.shape_summary_list,
+        ) = model_module.import_task()
         self.data_loader = model_module.import_data_loader()
 
         # Eliminate parameters and buffers
@@ -74,9 +84,9 @@ class ModelSummary:
         self.cuda_stream_for_computation = torch.cuda.Stream(self.device)
 
         with torch.cuda.stream(self.cuda_stream_for_parameter):
-            torch.cuda.insert_shared_cache_for_parameter(self.device)
+            torch.cuda.insert_cache_for_param(self.device)
         with torch.cuda.stream(self.cuda_stream_for_computation):
-            torch.cuda.insert_shared_cache_for_computation(self.device)
+            torch.cuda.insert_cache_for_comp(self.device)
 
         with torch.cuda.stream(self.cuda_stream_for_parameter):
             for shape_list, param_list, buf_list, _ in self.shape_summary_list:
@@ -84,4 +94,6 @@ class ModelSummary:
                     p.data = torch.empty(shape, device=f"cuda:{self.device}")
                 for shape, b in zip(shape_list[len(param_list) :], buf_list):
                     mod, key = b
-                    mod._buffers[key] = torch.empty(shape, device=f"cuda:{self.device}")
+                    mod._buffers[key] = torch.empty(
+                        shape, device=f"cuda:{self.device}"
+                    )

@@ -1,10 +1,10 @@
 import argparse
 import os
-import torch
+
 import task.common as util
+import torch
 
 from detectron2.data.detection_utils import read_image
-
 from few_shot_detection.demo.predictor import VisualizationDemo
 from few_shot_detection.fsdet.config import get_cfg
 

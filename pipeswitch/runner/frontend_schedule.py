@@ -1,6 +1,7 @@
-import threading
-import torch
 import importlib
+import threading
+
+import torch
 
 from util.util import timestamp
 

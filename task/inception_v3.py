@@ -1,8 +1,7 @@
 import os
 
-import torch
-
 import task.common as util
+import torch
 
 MODEL_NAME = "inception_v3"
 

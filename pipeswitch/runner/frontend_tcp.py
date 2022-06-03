@@ -1,5 +1,5 @@
-import threading
 import struct
+import threading
 
 from util.util import timestamp
 

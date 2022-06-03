@@ -2,12 +2,12 @@ import contextlib
 import threading
 import time
 
-import torch
 import numpy
+import torch
 
-from pipeswitch.common.logger import logger
-import pipeswitch.task.resnet152 as resnet152
 import pipeswitch.task.common as util
+import pipeswitch.task.resnet152 as resnet152
+from pipeswitch.common.logger import logger
 
 TASK_NAME = "resnet152_inference"
 
