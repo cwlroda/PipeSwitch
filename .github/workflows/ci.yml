@@ -15,9 +15,9 @@ jobs:
         python-version: ["3.7", "3.8", "3.9", "3.10"]
 
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v3
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v1
+        uses: actions/setup-python@v3
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install dependencies
@@ -30,7 +30,9 @@ jobs:
         run: python3 -m pydocstyle --convention=google pipeswitch
       - name: mypy
         # You can comment this out if you use this repo for a student project
-        run: python3 -m mypy --strict pipeswitch
+        run: |
+          python3 -m mypy --install-types
+          python3 -m mypy --strict pipeswitch
       - name: isort
         # these errors can be fixed by python3 -m isort pipeswitch
         run: python3 -m isort -c pipeswitch
@@ -46,9 +48,9 @@ jobs:
       matrix:
         python-version: ["3.7", "3.8", "3.9", "3.10"]
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v3
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v1
+        uses: actions/setup-python@v3
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install dependencies

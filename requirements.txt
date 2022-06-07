@@ -1,0 +1,17 @@
+black
+colorama
+conda
+gpustat
+isort
+jsonpickle
+mypy
+mypy-extensions
+numpy
+py-spy
+pydocstyle
+pylint
+PyYAML
+redis
+types-redis
+types-setuptools
+typing_extensions

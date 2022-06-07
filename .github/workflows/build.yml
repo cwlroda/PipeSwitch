@@ -1,4 +1,4 @@
-name: PyTorch Build From Source
+name: Build
 
 on:
   push:
@@ -16,6 +16,9 @@ jobs:
     # You can convert this to a matrix build if you need cross-platform coverage.
     # See: https://docs.github.com/en/free-pro-team@latest/actions/learn-github-actions/managing-complex-workflows#using-a-build-matrix
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.7", "3.8", "3.9", "3.10"]
     defaults:
       run:
         shell: bash -l {0}
@@ -32,6 +35,11 @@ jobs:
         run: |
           sudo apt-get update -qq && sudo apt-get upgrade -qq -y
           sudo apt-get -qq install -y wget
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v3
+        with:
+          python-version: ${{ matrix.python-version }}
 
       - name: Install CUDA
         uses: Jimver/cuda-toolkit@v0.2.5
@@ -73,27 +81,36 @@ jobs:
           conda info
           conda list
 
-      - name: Set environment variables
-        run: |
-          export CMAKE_PREFIX_PATH=${CONDA_PREFIX:-"$(dirname $(which conda))/../"}
-          export MAX_JOBS=1
-          export USE_CUDA=1
-          export USE_CUDNN=1
-          export PATH="${{steps.cuda-toolkit.outputs.CUDA_PATH}}/bin${PATH:+:${PATH}}"
-          export LD_LIBRARY_PATH="${{steps.cuda-toolkit.outputs.CUDA_PATH}}/lib64${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
-          export CUDA_HOME="/usr/local/cuda"
-
       - name: Clone and build PyTorch
+        env:
+          CMAKE_PREFIX_PATH: ${CONDA_PREFIX:-"$(dirname $(which conda))/../"}
+          MAX_JOBS: 1
+          USE_CUDA: 1
+          USE_CUDNN: 1
+          PATH: "${{steps.cuda-toolkit.outputs.CUDA_PATH}}/bin${PATH:+:${PATH}}"
+          LD_LIBRARY_PATH: "${{steps.cuda-toolkit.outputs.CUDA_PATH}}/lib64${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
+          CUDA_HOME: "/usr/local/cuda"
         run: |
           wget -q https://github.com/pytorch/pytorch/releases/download/v1.11.0/pytorch-v1.11.0.tar.gz
           tar -xzf pytorch-v1.11.0.tar.gz
           cd pytorch-v1.11.0
-          python setup.py install
+          python3 setup.py install
           chmod +x ${{github.workspace}}/pytorch_plugins/overwrite.sh
           bash ${{github.workspace}}/pytorch_plugins/overwrite.sh .
-          python setup.py install
+          python3 setup.py install
           export PYTHONPATH=$PYTHONPATH:$PWD
 
       - name: Test PyTorch installation
         run: |
           python3 ${{github.workspace}}/test/pt.py
+
+      - name: Clone and build torchvision
+        run: |
+          wget -q https://github.com/pytorch/vision/archive/refs/tags/v0.12.0.tar.gz
+          tar -xzf v0.12.0.tar.gz
+          cd vision-0.12.0
+          python3 setup.py install
+
+      - name: Install detectron2
+        run: |
+          python3 -m pip install 'git+https://github.com/facebookresearch/detectron2.git'
