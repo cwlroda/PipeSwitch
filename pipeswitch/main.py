@@ -1,64 +1,44 @@
-import sys
-from queue import Queue
+# -*- coding: utf-8 -*-
+"""PipeSwitch Run Script
 
-import torch
+This module is the main entry point for the PipeSwitch Manager.
+
+Run this file from the main directory of the project::
+
+    $ python3 main.py <num_gpus>
+
+For profiling, run:
+
+    $ py-spy top --pid <PID> --subprocesses
+
+Todo:
+    * None
+"""
+
+import os
+import sys
 import torch.multiprocessing as mp
 
-from pipeswitch.runner.frontend_tcp import FrontendTcpThd
-from pipeswitch.runner.frontend_schedule import FrontendScheduleThd
-from pipeswitch.runner.worker import WorkerProc
-from util.util import timestamp, TcpAgent, TcpServer
+from pipeswitch.common.logger import logger
+from pipeswitch.manager.manager import Manager
+import traceback
 
 
-def main():
-    timestamp("frontend", "start")
+def launch():
+    try:
+        logger.info(f"PID: {os.getpid()}")
+        os.system("redis-server redis.conf")
+        mp.set_start_method("forkserver")
+        num_gpus = int(sys.argv[1]) if len(sys.argv) > 1 else 0
+        manager: Manager = Manager(num_gpus=num_gpus)
+        manager.run()
+    except TypeError as type_err:
+        logger.warning(type_err)
+        logger.warning(traceback.format_exc())
+        logger.warning("Handling stray event loops")
 
-    # Load model list
-    model_list_file_name = sys.argv[1]
-    model_list = []
-    with open(model_list_file_name) as f:
-        for line in f.readlines():
-            model_list.append(line.strip())
-
-    # Warm up CUDA and allocate shared cache
-    device = 0
-    torch.cuda.set_device(device)
-    torch.randn(1024, device=f"cuda:{device}")
-    torch.cuda.allocate_shared_cache(device)
-
-    # Create workers
-    num_workers = 2
-    worker_list = []
-    for _ in range(num_workers):
-        p_parent, p_child = mp.Pipe()
-        param_trans_parent, param_trans_child = mp.Pipe()
-        term_parent, term_child = mp.Pipe()
-        worker = WorkerProc(device, model_list, p_child, param_trans_child, term_child)
-        worker.start()
-        torch.cuda.send_shared_cache(device)
-        worker_list.append((p_parent, worker, param_trans_parent, term_parent))
-        timestamp("frontend", "create_worker")
-
-    # Create request queue and scheduler thread
-    requests_queue = Queue()
-    t_sch = FrontendScheduleThd(device, model_list, requests_queue, worker_list)
-    t_sch.start()
-    timestamp("frontend", "start_schedule")
-
-    # Accept connections
-    server = TcpServer("localhost", 12345)
-    timestamp("tcp", "listen")
-    while True:
-        conn, _ = server.accept()
-        agent = TcpAgent(conn)
-        timestamp("tcp", "connected")
-        t_tcp = FrontendTcpThd(requests_queue, agent)
-        t_tcp.start()
-
-    # Wait for end
-    t_sch.join()
+    logger.info("Main: Exiting")
 
 
 if __name__ == "__main__":
-    mp.set_start_method("spawn")
-    main()
+    launch()

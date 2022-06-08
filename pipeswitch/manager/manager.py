@@ -12,30 +12,31 @@ Todo:
     * None
 """
 
-import json
 import os
-import threading
+import json
+from threading import Thread
+from queue import Queue
 import time
 
 from typing import Any, List, OrderedDict, Tuple
-
 import torch
 import torch.multiprocessing as mp
 from multiprocessing import connection
 
+from pipeswitch.common.consts import REDIS_HOST, REDIS_PORT
 from pipeswitch.common.logger import logger
 from pipeswitch.common.servers import (
-    ManagerRequestsServer,
-    ManagerResultsServer,
+    ManagerTasksServer,
     RedisServer,
 )
+from pipeswitch.manager.client_manager import ClientManager
 from pipeswitch.manager.gpu_resource_allocator import GPUResourceAllocator
 from pipeswitch.manager.scheduler import Scheduler
-from pipeswitch.runner.runner import RunnerThd
+from pipeswitch.runner.runner import Runner
 from pipeswitch.runner.worker import WorkerProc
 
 
-class ManagerThd(threading.Thread):
+class Manager:
     """Manager thread that acts as a middleman between clients and runners.
 
     It has two main functions:
@@ -59,18 +60,16 @@ class ManagerThd(threading.Thread):
         scheduler (`Scheduler`): Thread that schedules tasks to runners.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, num_gpus: int = -1) -> None:
         super().__init__()
         self.do_run: bool = True
+        self.num_gpus = num_gpus
         self.gra: GPUResourceAllocator = GPUResourceAllocator()
-        self.req_server: RedisServer = ManagerRequestsServer(
-            host="127.0.0.1", port=6379
-        )
-        self.res_server: RedisServer = ManagerResultsServer(
-            host="127.0.0.1", port=6379
-        )
+        self.client_manager: Thread = ClientManager()
         self.model_list: List(str) = []
-        self.runners: OrderedDict[int, RunnerThd] = OrderedDict()
+        self.runners: OrderedDict[
+            int, OrderedDict[Runner, RedisServer]
+        ] = OrderedDict()
         self.scheduler: Scheduler = Scheduler()
         self.num_tasks_complete: int = 0
 
@@ -80,61 +79,57 @@ class ManagerThd(threading.Thread):
         Raises:
             `TypeError`: If the message received is not a JSON string.
         """
-        self._setup()
-        logger.info("Manager setup done")
-        logger.info("Manager: Waiting for all runners to be ready")
-        while len(self.scheduler.runner_status) < 1:
-            time.sleep(0.1)
-        logger.info(
-            "\n***********************************\n"
-            "Manager: Ready to receive requests!\n"
-            "***********************************"
-        )
-        while True:
-            num_tasks_complete = 0
-            for runner_id, runner in self.runners.items():
-                num_tasks_complete += runner.num_tasks_complete
-            if num_tasks_complete > self.num_tasks_complete:
-                self.num_tasks_complete = num_tasks_complete
-                logger.info(f"{num_tasks_complete} task(s) complete!")
-            if not self.req_server.sub_queue.empty():
-                in_msg: str = self.req_server.sub_queue.get()
-                try:
-                    task: OrderedDict[str, Any] = json.loads(in_msg)
-                    logger.info(f"Manager: Received task {task['task_name']}")
-                except TypeError as json_decode_err:
-                    logger.debug(json_decode_err)
-                    logger.debug(f"Ignoring msg {in_msg}")
-                    continue
-                runner_id: int = -1
-                while runner_id == -1:
-                    time.sleep(1)
-                    runner_id = self.scheduler.schedule()
-                out_msg: OrderedDict[str, Any] = {
-                    "runner_id": runner_id,
-                    "client_id": task["client_id"],
-                    "task_name": task["task_name"],
-                    # "data": task["data"],
-                }
-                logger.info(
-                    f"Assigning task {task['task_name']} from client"
-                    f" {task['client_id']} to runner {runner_id}"
-                )
-                json_msg: str = json.dumps(out_msg)
-                self.req_server.pub_queue.put(json_msg)
-                self.req_server.publish()
+        try:
+            self._setup()
+            logger.info("Manager setup done")
+            logger.info("Manager: Waiting for all runners to be ready")
+            while len(self.scheduler.runner_status) < 1:
+                time.sleep(0.1)
+            logger.info(
+                "\n***********************************\n"
+                "Manager: Ready to receive requests!\n"
+                "***********************************"
+            )
+            check_num_tasks_complete: Thread = Thread(
+                target=self._check_num_tasks_complete
+            )
+            allocate_tasks: Thread = Thread(target=self._allocate_tasks)
+            check_results: List[Thread] = [
+                Thread(target=self._check_results, args=(runner_id,))
+                for runner_id in self.runners.keys()
+            ]
+            check_num_tasks_complete.daemon = True
+            check_num_tasks_complete.start()
+            allocate_tasks.daemon = True
+            allocate_tasks.start()
+            for check_result in check_results:
+                check_result.daemon = True
+                check_result.start()
+            while self.do_run:
+                time.sleep(100)
+        except KeyboardInterrupt as _:
+            logger.warning("Manager: Shutting down")
+            self.gra.release_gpus()
+            self.do_run = False
+            logger.info("Manager: Successfully shut down")
 
     def _setup(self) -> None:
         """Run setup tasks in the manager."""
-
         logger.info("Manager: Start")
-        self.req_server.start()
-        self.res_server.start()
-        self.scheduler.start()
-        self._load_model_list(file_name="model_list.txt")
-        logger.info(f"Available GPUs: {self.gra.reserve_gpus()}")
-        self.gra.warmup_gpus()
-        self._create_runners()
+        try:
+            self.gra.cuda_init()
+            self.client_manager.daemon = True
+            self.client_manager.start()
+            self._load_model_list(file_name="model_list.txt")
+            self.allocated_gpus = self.gra.reserve_gpus(self.num_gpus)
+            logger.info(f"Allocated GPUs: {self.allocated_gpus}")
+            self.gra.warmup_gpus(gpus=self.allocated_gpus)
+            self._create_runners()
+            self.scheduler.daemon = True
+            self.scheduler.runner_idx = self.runners.keys()
+            self.scheduler.start()
+        except KeyboardInterrupt as kb_int:
+            raise KeyboardInterrupt from kb_int
 
     def _load_model_list(self, file_name: str) -> None:
         """Load a list of models to be used by the manager.
@@ -150,15 +145,52 @@ class ManagerThd(threading.Thread):
             for line in f.readlines():
                 self.model_list.append(line.strip())
 
-    def _create_runners(self, num_workers: int = 2) -> None:
+    def _create_runners(self) -> None:
         """Create runner for each available GPU.
 
         Args:
             num_workers (`int`, optional):
                 number of workers to create per runner, default 2.
         """
-        for runner_id in self.gra.get_free_gpus():
-            torch.cuda.set_device(device=runner_id)
+        try:
+            for runner_id in self.allocated_gpus:
+                torch.cuda.set_device(device=runner_id)
+                runner: Thread = Runner(
+                    device=runner_id,
+                    model_list=self.model_list,
+                    worker_list=self._create_workers(runner_id),
+                )
+                runner.daemon = True
+                runner.start()
+                task_server = ManagerTasksServer(
+                    module_id=runner_id,
+                    host=REDIS_HOST,
+                    port=REDIS_PORT,
+                    pub_queue=Queue(),
+                    sub_queue=Queue(),
+                )
+                task_server.daemon = True
+                task_server.start()
+                self.runners[runner_id] = {
+                    "runner": runner,
+                    "task_server": task_server,
+                }
+                logger.info(f"Created runner in GPU {runner_id}")
+                break
+        except KeyboardInterrupt as kb_int:
+            raise KeyboardInterrupt from kb_int
+
+    def _create_workers(
+        self, runner_id: int, num_workers: int = 2
+    ) -> List[
+        Tuple[
+            connection.Connection,
+            WorkerProc,
+            connection.Connection,
+            connection.Connection,
+        ]
+    ]:
+        try:
             worker_list: List[
                 Tuple[
                     connection.Connection,
@@ -187,33 +219,82 @@ class ManagerThd(threading.Thread):
                     param_trans_pipe=param_trans_child,
                     term_pipe=term_child,
                 )
+                worker.daemon = True
                 worker.start()
+                if worker.exception is not None:
+                    logger.error(
+                        f"Manager exception caught: {worker.exception[0]}"
+                    )
+                    raise KeyboardInterrupt from worker.exception[0]
                 torch.cuda.send_cache(device=runner_id)
                 worker_list.append(
                     (p_parent, worker, param_trans_parent, term_parent)
                 )
                 logger.debug(f"Created worker {i+1} in GPU {runner_id}")
+            return worker_list
+        except KeyboardInterrupt as kb_err:
+            raise KeyboardInterrupt from kb_err
 
-            runner: threading.Thread = RunnerThd(
-                device=runner_id,
-                model_list=self.model_list,
-                worker_list=worker_list,
-            )
-            runner.start()
+    def _check_num_tasks_complete(self) -> None:
+        while True:
+            try:
+                num_tasks_complete = sum(
+                    val["runner"].num_tasks_complete
+                    for val in self.runners.values()
+                )
+                if num_tasks_complete > self.num_tasks_complete:
+                    self.num_tasks_complete = num_tasks_complete
+                    logger.info(f"{num_tasks_complete} task(s) complete!")
+                    time.sleep(5)
+            except KeyboardInterrupt as kb_err:
+                raise KeyboardInterrupt from kb_err
 
-            self.runners[runner_id] = runner
-            logger.info(f"Created runner in GPU {runner_id}")
-            # break
+    def _allocate_tasks(self) -> None:
+        while True:
+            try:
+                if not self.client_manager.requests_queue.empty():
+                    task: OrderedDict[
+                        str, Any
+                    ] = self.client_manager.requests_queue.get()
+                    runner_id: int = -1
+                    while runner_id == -1:
+                        time.sleep(1)
+                        runner_id = self.scheduler.schedule()
+                    msg: OrderedDict[str, Any] = {
+                        "runner_id": runner_id,
+                        "client_id": task["client_id"],
+                        "task_name": task["task_name"],
+                        # "data": task["data"],
+                    }
+                    logger.info(
+                        f"Assigning task {task['task_name']} from client"
+                        f" {task['client_id']} to runner {runner_id}"
+                    )
+                    json_msg: str = json.dumps(msg)
+                    self.runners[runner_id]["task_server"].pub_queue.put(
+                        json_msg
+                    )
+                    while not self.runners[runner_id]["task_server"].publish():
+                        continue
+            except KeyboardInterrupt as kb_err:
+                raise KeyboardInterrupt from kb_err
 
-
-if __name__ == "__main__":
-    os.system("redis-server redis.conf")
-    mp.set_start_method("forkserver")
-    manager: ManagerThd = ManagerThd()
-
-    try:
-        manager.run()
-    except RuntimeError as runtime_err:
-        logger.exception(f"Manager Exception: {runtime_err}")
-        manager.do_run = False
-        manager.gra.release_gpus()
+    def _check_results(self, runner_id: int) -> None:
+        task_server: RedisServer = self.runners[runner_id]["task_server"]
+        while True:
+            try:
+                if not task_server.sub_queue.empty():
+                    msg: str = task_server.sub_queue.get()
+                    try:
+                        result: OrderedDict[str, Any] = json.loads(msg)
+                        logger.info(
+                            f"Received {result['task_name']} result from runner"
+                            f" {runner_id}"
+                        )
+                        self.client_manager.results_queue.put(msg)
+                    except TypeError as json_decode_err:
+                        logger.debug(json_decode_err)
+                        logger.debug(f"Ignoring msg {msg}")
+                        continue
+            except KeyboardInterrupt as kb_err:
+                raise KeyboardInterrupt from kb_err

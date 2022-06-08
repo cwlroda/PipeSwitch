@@ -33,7 +33,8 @@ def import_model():
 def import_func():
     def inference(device, model, data):
         logger.debug(
-            f"{threading.currentThread().getName()} resnet152 inference >>>>>>>>>> {time.time()} model status {model.training}"
+            f"{threading.currentThread().getName()} resnet152 inference"
+            f" >>>>>>>>>> {time.time()} model status {model.training}"
         )
 
         with timer("resnet152 inference func"):

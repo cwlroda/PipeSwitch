@@ -30,7 +30,24 @@ class GPUResourceAllocator:
 
     def __init__(self) -> None:
         self.gpus = self._get_gpus()
-        self._cuda_init()
+
+    def cuda_init(self) -> None:
+        """Checks if available GPUs are visible by PyTorch.
+
+        Raises:
+            `AssertionError`: If CUDA is not available.
+
+            `AssertionError`: If the number of GPUs visible by PyTorch
+                is not equal to the total number of available GPUs.
+        """
+        os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
+        os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+        if not torch.cuda.is_available():
+            logger.error("CUDA is not available")
+            raise KeyboardInterrupt
+        if len(self.gpus) < 1 or torch.cuda.device_count() < 1:
+            logger.error("No GPUs available")
+            raise KeyboardInterrupt
 
     def get_free_gpus(self) -> List[int]:
         """Query available GPUs.
@@ -56,7 +73,8 @@ class GPUResourceAllocator:
         """
         available_gpus: List[int] = []
         if "CUDA_VISIBLE_DEVICES" in os.environ:
-            available_gpus = List(
+            logger.warning("CUDA_VISIBLE_DEVICES is already set")
+            available_gpus = list(
                 map(int, os.environ["CUDA_VISIBLE_DEVICES"].split(","))
             )
             return available_gpus
@@ -64,15 +82,15 @@ class GPUResourceAllocator:
         free_gpus: List[int] = self.get_free_gpus()
         if num_gpus == 0:
             num_gpus = len(free_gpus)
-        assert num_gpus > 0 and num_gpus >= len(free_gpus), (
-            f"Unable to acquire {num_gpus} GPUs, there are only"
-            f" {len(free_gpus)} available."
-        )
+        if num_gpus > 0 and num_gpus <= len(free_gpus):
+            logger.error(
+                f"Unable to acquire {num_gpus} GPUs, there are only"
+                f" {len(free_gpus)} available."
+            )
+            raise KeyboardInterrupt
 
         available_gpus = free_gpus[:num_gpus]
         gpu_str: str = ",".join([str(i) for i in available_gpus])
-        os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
-        os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
         os.environ["CUDA_VISIBLE_DEVICES"] = gpu_str
 
         logger.debug(f"Acquiring GPUs: {os.environ['CUDA_VISIBLE_DEVICES']}")
@@ -80,9 +98,9 @@ class GPUResourceAllocator:
             self._check_gpu(gpu_id)
         return available_gpus
 
-    def warmup_gpus(self) -> None:
+    def warmup_gpus(self, gpus: List[int]) -> None:
         """Warmup GPUs by running a dummy PyTorch function."""
-        for gpu_id in self.get_free_gpus():
+        for gpu_id in gpus:
             torch.cuda.set_device(gpu_id)
             torch.randn(1024, device=f"cuda:{gpu_id}")
             torch.cuda.allocate_cache(gpu_id)  # type: ignore
@@ -90,23 +108,11 @@ class GPUResourceAllocator:
 
     def release_gpus(self) -> None:
         """Release all reserved GPUS."""
+        if "CUDA_VISIBLE_DEVICES" not in os.environ:
+            return
         if os.environ["CUDA_VISIBLE_DEVICES"] != "":
             os.environ["CUDA_VISIBLE_DEVICES"] = ""
             logger.debug("Releasing all GPUs")
-
-    def _cuda_init(self) -> None:
-        """Checks if available GPUs are visible by PyTorch.
-
-        Raises:
-            `AssertionError`: If CUDA is not available.
-
-            `AssertionError`: If the number of GPUs visible by PyTorch
-                is not equal to the total number of available GPUs.
-        """
-        assert torch.cuda.is_available()
-        assert (
-            len(self.gpus) > 0 and len(self.gpus) <= torch.cuda.device_count()
-        ), "No GPUs available"
 
     def _get_gpus(self) -> OrderedDict[int, GPUStat]:
         """Uses gpustat to query all GPUs in the system.
@@ -132,4 +138,5 @@ class GPUResourceAllocator:
         """
         device: torch.device = torch.device(f"cuda:{gpu_id}")
         x_train: torch.Tensor = torch.FloatTensor([0.0, 1.0, 2.0]).to(device)
-        assert x_train.is_cuda, f"GPU {gpu_id} is not available"
+        if not x_train.is_cuda:
+            logger.error(f"GPU {gpu_id} cannot be utilised by PyTorch")
