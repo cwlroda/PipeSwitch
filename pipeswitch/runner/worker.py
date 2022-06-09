@@ -20,6 +20,7 @@ from pipeswitch.runner.worker_terminate import WorkerTermThd
 class WorkerProc(mp.Process):
     def __init__(
         self,
+        mode: str,
         device: int,
         worker_id: int,
         model_list: List[str],
@@ -29,6 +30,7 @@ class WorkerProc(mp.Process):
     ):
         super().__init__()
         self.do_run: bool = True
+        self.mode: str = mode
         self.device: int = device
         self.worker_id: int = worker_id
         self.status: State = State.STARTUP
@@ -38,13 +40,13 @@ class WorkerProc(mp.Process):
         self.pipe: connection.Connection = pipe
         self.param_trans_pipe: connection.Connection = param_trans_pipe
         self.term_pipe: connection.Connection = term_pipe
-        self.comms_server: RedisServer = WorkerCommsServer(
+        self.comms_server: WorkerCommsServer = WorkerCommsServer(
             module_id=self.device,
             worker_id=self.worker_id,
             host=REDIS_HOST,
             port=REDIS_PORT,
-            pub_queue=Queue(),
-            sub_queue=Queue(),
+            pub_queue=mp.Queue(),
+            sub_queue=mp.Queue(),
         )
         self.status_queue: "mp.Queue[State]" = mp.Queue()
         self._pconn, self._cconn = mp.Pipe()
@@ -55,12 +57,13 @@ class WorkerProc(mp.Process):
         try:
             self.comms_server.create_pub()
 
-            torch.cuda.set_device(device=self.device)
-            # Get shared cache
-            torch.cuda.recv_cache(device=self.device)
-            logger.debug(
-                f"Worker {self.device}-{self.worker_id}: share GPU memory"
-            )
+            if self.mode == "gpu":
+                torch.cuda.set_device(device=self.device)
+                # Get shared cache
+                torch.cuda.recv_cache(device=self.device)
+                logger.debug(
+                    f"Worker {self.device}-{self.worker_id}: share GPU memory"
+                )
 
             # Create required variables
             self.complete_queue = mp.Queue()
@@ -92,8 +95,10 @@ class WorkerProc(mp.Process):
             compute = Thread(target=self._compute)
             compute.daemon = True
             compute.start()
+            # compute.join()
             while self.do_run:
-                time.sleep(100)
+                # print("worker")
+                pass
         except RuntimeError as runtime_err:
             logger.error(runtime_err)
             tb = traceback.format_exc()
@@ -132,22 +137,35 @@ class WorkerProc(mp.Process):
             # frontend_scheduler will directly put
             # mod_list[0] in to self.complete_queue_trans
             try:
-                with torch.cuda.stream(
-                    model_summary.cuda_stream_for_computation
-                ):
-                    logger.debug("Dummy inference execution")
+                if self.mode == "gpu":
+                    with torch.cuda.stream(
+                        model_summary.cuda_stream_for_computation
+                    ):
+                        logger.debug(
+                            f"Worker {self.device}-{self.worker_id}: Dummy"
+                            " inference execution"
+                        )
+                        output = "some random data"
+                        time.sleep(5)
+                        # output = model_summary.execute(task["data"])
+                        # logger.info(f"Get output: {output}")
+                        # del output
+                else:
+                    logger.debug(
+                        f"Worker {self.device}-{self.worker_id}: CPU debug mode"
+                        " task execution"
+                    )
                     output = "some random data"
                     time.sleep(5)
-                    # output = model_summary.execute(task["data"])
-                    # logger.info(f"Get output: {output}")
-                    # del output
                 msg: OrderedDict[str, Any] = {
                     "worker_id": self.worker_id,
                     "client_id": task["client_id"],
+                    "task_id": task["task_id"],
                     "task_name": task["task_name"],
                     "status": str(State.SUCCESS),
                     "output": output,
                 }
+
                 self.pipe.send(msg)
             except RuntimeError as runtime_err:
                 logger.error(runtime_err)

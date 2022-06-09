@@ -43,8 +43,6 @@ class RedisServer(ABC, Thread):
         self,
         host: str,
         port: int,
-        pub_queue: "Queue[str]",
-        sub_queue: "Queue[str]",
         module_id: int = -1,
         worker_id: int = -1,
         client_id="",
@@ -56,8 +54,8 @@ class RedisServer(ABC, Thread):
         self._module_id: int = module_id
         self._worker_id: int = worker_id
         self._client_id: str = client_id
-        self._pub_queue: "Queue[str]" = pub_queue
-        self._sub_queue: "Queue[str]" = sub_queue
+        self._pub_queue: "Queue[str]" = Queue()
+        self._sub_queue: "Queue[str]" = Queue()
 
     def run(self) -> None:
         try:
@@ -67,7 +65,7 @@ class RedisServer(ABC, Thread):
             listen.daemon = True
             listen.start()
             while self.do_run:
-                time.sleep(100)
+                time.sleep(100000)
         except KeyboardInterrupt as kb_int:
             raise KeyboardInterrupt from kb_int
 
@@ -168,22 +166,6 @@ class RedisServer(ABC, Thread):
         return self._pub_queue
 
 
-class SchedulerCommsServer(RedisServer):
-    """Server in the manager scheduler that records status of runners."""
-
-    @property
-    def _server_name(self) -> str:
-        return f"SchedulerCommsServer-{self.module_id}"
-
-    @property
-    def pub_channel(self) -> str:
-        return ""
-
-    @property
-    def sub_channel(self) -> str:
-        return f"RUNNER_STATUS_{self.module_id}"
-
-
 class ManagerClientConnectionServer(RedisServer):
     """Server in the manager that:
     - Receives connection requests from clients.
@@ -229,173 +211,6 @@ class ManagerClientRequestsServer(RedisServer):
             return f"REQUESTS-{self.client_id}"
         else:
             return "REQUESTS"
-
-
-class ManagerTasksServer(RedisServer):
-    """Server in the manager that:
-    - Sends tasks to a specific runner.
-    - Receives task results from the specific runner.
-    """
-
-    @property
-    def _server_name(self) -> str:
-        if self.module_id != -1:
-            return f"ManagerTasksServer-{self.module_id}"
-        else:
-            return "ManagerTasksServer"
-
-    @property
-    def pub_channel(self) -> str:
-        if self.module_id != -1:
-            return f"TASKS_{self.module_id}"
-        else:
-            return "TASKS"
-
-    @property
-    def sub_channel(self) -> str:
-        if self.module_id != -1:
-            return f"RESULTS_{self.module_id}"
-        else:
-            return "RESULTS"
-
-
-class RunnerCommsServer(RedisServer):
-    """Server in the runner that updates runner status."""
-
-    @property
-    def _server_name(self) -> str:
-        if self.module_id != -1:
-            return f"RunnerCommsServer-{self._module_id}"
-        else:
-            return "RunnerCommsServer"
-
-    @property
-    def pub_channel(self) -> str:
-        if self.module_id != -1:
-            return f"RUNNER_STATUS_{self._module_id}"
-        else:
-            return "RUNNER_STATUS"
-
-    @property
-    def sub_channel(self) -> str:
-        if self.module_id != -1:
-            return f"WORKER_STATUS_{self._module_id}"
-        else:
-            return "WORKER_STATUS"
-
-
-class RunnerTaskServer(RedisServer):
-    """Server in the runner that:
-    - Receives tasks from the manager
-    - Sends task results to the manager
-    """
-
-    @property
-    def _server_name(self) -> str:
-        if self.module_id != -1:
-            return f"RunnerTaskServer-{self.module_id}"
-        else:
-            return "RunnerTaskServer"
-
-    @property
-    def pub_channel(self) -> str:
-        if self.module_id != -1:
-            return f"RESULTS_{self.module_id}"
-        else:
-            return "RESULTS"
-
-    @property
-    def sub_channel(self) -> str:
-        if self.module_id != -1:
-            return f"TASKS_{self.module_id}"
-        else:
-            return "TASKS"
-
-
-class WorkerCommsServer(RedisServer):
-    @property
-    def _server_name(self) -> str:
-        if self._module_id != -1:
-            return f"WorkerCommsServer-{self._module_id}"
-        else:
-            return "WorkerCommsServer"
-
-    @property
-    def pub_channel(self) -> str:
-        if self._module_id != -1:
-            return f"WORKER_STATUS_{self._module_id}"
-        else:
-            return "WORKER_STATUS"
-
-    @property
-    def sub_channel(self) -> str:
-        return ""
-
-
-# class WorkerCommsServer:
-#     """Server in the worker that updates worker status.
-#     Attributes:
-#         _server_name (`str`): Name of the server.
-#         _host (`str`): Redis host IP address.
-#         _port (`int`): Redis port number.
-#         _redis_pub (`redis.Redis`): Redis client for publishing.
-#         _pub_channel (`str`): Redis channel to publish to.
-#         _pub_queue (`Queue[str]`): Queue for publishing messages.
-#         _module_id (`int`, optional): ID of the module the server is under.
-#         _worker_id (`int`, optional): ID of the worker the server is under.
-#     """
-
-#     def __init__(
-#         self, host: str, port: int, module_id: int = -1, worker_id: int = -1
-#     ) -> None:
-#         super().__init__()
-#         self._host: str = host
-#         self._port: int = port
-#         self._module_id: int = module_id
-#         self._worker_id: int = worker_id
-#         self._pub_queue: mp.Queue = mp.Queue()
-
-#     def publish(self) -> bool:
-#         if self.pub_channel == "":
-#             return True
-#         if not self.pub_queue.empty():
-#             item = self.pub_queue.get()
-#             logger.debug(
-#                 f"{self._server_name}: publishing msg to channel"
-#                 f" {self.pub_channel}"
-#             )
-#             self._redis_pub.publish(self.pub_channel, item)
-#             return True
-#         return False
-
-#     def create_pub(self) -> None:
-#         self._redis_pub = redis.Redis(
-#             host=self._host,
-#             port=self._port,
-#             encoding="utf-8",
-#             decode_responses=True,
-#         )
-#         assert (
-#             self._redis_pub.ping()
-#         ), f"{self._server_name}-pub: connection failed!"
-
-#     @property
-#     def _server_name(self) -> str:
-#         if self._module_id != -1:
-#             return f"WorkerCommsServer-{self._module_id}"
-#         else:
-#             return "WorkerCommsServer"
-
-#     @property
-#     def pub_channel(self) -> str:
-#         if self._module_id != -1:
-#             return f"WORKER_STATUS_{self._module_id}"
-#         else:
-#             return "WORKER_STATUS"
-
-#     @property
-#     def pub_queue(self) -> mp.Queue:
-#         return self._pub_queue
 
 
 class ClientConnectionServer(RedisServer):

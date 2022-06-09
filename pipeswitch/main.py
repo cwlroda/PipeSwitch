@@ -29,9 +29,11 @@ def launch():
         logger.info(f"PID: {os.getpid()}")
         os.system("redis-server redis.conf")
         mp.set_start_method("forkserver")
-        num_gpus = int(sys.argv[1]) if len(sys.argv) > 1 else 0
-        manager: Manager = Manager(num_gpus=num_gpus)
-        manager.run()
+        mode = sys.argv[1]
+        num_gpus = int(sys.argv[2]) if len(sys.argv) > 2 else 1
+        manager: Manager = Manager(mode=mode, num_gpus=num_gpus)
+        manager.start()
+        manager.join()
     except TypeError as type_err:
         logger.warning(type_err)
         logger.warning(traceback.format_exc())

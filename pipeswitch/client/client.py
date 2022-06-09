@@ -4,6 +4,7 @@ import uuid
 import time
 from queue import Queue
 from typing import Any, OrderedDict
+from threading import Thread
 
 from pipeswitch.common.consts import (
     ConnectionRequest,
@@ -16,6 +17,7 @@ from pipeswitch.common.logger import logger
 from pipeswitch.common.servers import (
     ClientConnectionServer,
     ClientRequestsServer,
+    RedisServer,
 )
 
 # from pipeswitch.task.helper import get_data
@@ -24,24 +26,27 @@ from pipeswitch.common.servers import (
 class Client:
     def __init__(self, _model_name, _batch_size, num_it) -> None:
         super().__init__()
-        self.client_id = str(uuid.uuid4())
-        self.conn_server = ClientConnectionServer(
+        self.client_id: str = str(uuid.uuid4())
+        self.conn_server: RedisServer = ClientConnectionServer(
             client_id=self.client_id,
             host=REDIS_HOST,
             port=REDIS_PORT,
-            pub_queue=Queue(),
-            sub_queue=Queue(),
         )
-        self.req_server = None
-        self.model_name = _model_name
-        self.batch_size = _batch_size
-        self.num_it = num_it
+        self.model_name: str = _model_name
+        self.batch_size: int = _batch_size
+        self.num_it: int = num_it
+        self.task_queue: Queue = Queue()
+        self.pending_tasks: OrderedDict[str, str] = OrderedDict()
 
     def run(self) -> None:
         self.conn_server.daemon = True
         self.conn_server.start()
         self._connect()
-        self._send_requests()
+        time.sleep(2)
+        self._prepare_requests()
+        send_requests: Thread = Thread(target=self._send_requests)
+        send_requests.daemon = True
+        send_requests.start()
         self._receive_results()
         self._disconnect()
 
@@ -70,8 +75,6 @@ class Client:
                                 client_id=self.client_id,
                                 host=conn["host"],
                                 port=conn["port"],
-                                pub_queue=Queue(),
-                                sub_queue=Queue(),
                             )
                             if (
                                 self.req_server.pub_channel
@@ -153,10 +156,8 @@ class Client:
                     f"Client {self.client_id}: Ignoring invalid handshake {msg}"
                 )
 
-    def _send_requests(self) -> None:
-        # data = get_data(
-        #     self.model_name, self.batch_size
-        # ).cpu().numpy().tolist()
+    def _prepare_requests(self) -> None:
+        # data = get_data(self.model_name, self.batch_size).cpu().numpy().tolist()
         for _ in range(self.num_it):
             task_id = str(uuid.uuid4())
             task_name = f"{self.model_name}_inference"
@@ -164,16 +165,24 @@ class Client:
                 "client_id": self.client_id,
                 "task_id": task_id,
                 "task_name": task_name,
-            }  # , "data": data}
-            json_msg = json.dumps(msg)
-            logger.info(
-                f"Client {self.client_id}: sending task {task_name} with id"
-                f" {task_id}"
-            )
-            self.req_server.pub_queue.put(json_msg)
-            while not self.req_server.publish():
-                continue
-            time.sleep(1)
+                # "data": data,
+            }
+            self.task_queue.put(msg)
+
+    def _send_requests(self) -> None:
+        while True:
+            if not self.task_queue.empty():
+                msg = self.task_queue.get()
+                logger.info(
+                    f"Client {self.client_id}: sending task"
+                    f" {msg['task_name']} with id {msg['task_id']}"
+                )
+                json_msg = json.dumps(msg)
+                self.pending_tasks[msg["task_id"]] = msg
+                self.req_server.pub_queue.put(json_msg)
+                while not self.req_server.publish():
+                    continue
+                time.sleep(0.1)
 
     def _receive_results(self) -> None:
         count = 0
@@ -189,6 +198,7 @@ class Client:
                             f" {result['task_id']} result {result['output']}"
                         )
                         count += 1
+                        self.pending_tasks.pop(result["task_id"])
                         # TODO: store results in the client
                     else:
                         # TODO: handle failed task
@@ -203,6 +213,10 @@ class Client:
                             f" {result['task_name']} with id"
                             f" {result['task_id']}"
                         )
+                        self.task_queue.put(
+                            self.pending_tasks[result["task_id"]]
+                        )
+
             except TypeError as json_decode_err:
                 logger.debug(json_decode_err)
                 logger.debug(

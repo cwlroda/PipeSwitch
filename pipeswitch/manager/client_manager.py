@@ -4,12 +4,14 @@ import json
 from queue import Queue
 from threading import Thread
 from typing import Any, OrderedDict
+import multiprocessing as mp
 
 from pipeswitch.common.consts import (
     ConnectionRequest,
     REDIS_HOST,
     REDIS_PORT,
     ResponseStatus,
+    State,
 )
 from pipeswitch.common.logger import logger
 from pipeswitch.common.servers import (
@@ -20,19 +22,19 @@ from pipeswitch.common.servers import (
 
 
 class ClientManager(Thread):
-    def __init__(self) -> None:
+    def __init__(self, results_queue: mp.Queue) -> None:
         super().__init__()
         self.do_run: bool = True
         self.max_clients: int = 10
         self._conn_server: RedisServer = ManagerClientConnectionServer(
             host=REDIS_HOST,
             port=REDIS_PORT,
-            pub_queue=Queue(),
-            sub_queue=Queue(),
         )
         self.clients: OrderedDict[str, RedisServer] = OrderedDict()
         self.requests_queue: Queue = Queue()
-        self.results_queue: Queue = Queue()
+        self.results_queue: mp.Queue = results_queue
+        self.num_tasks_complete: int = 0
+        self.num_tasks_failed: int = 0
 
     def run(self) -> None:
         try:
@@ -41,11 +43,11 @@ class ClientManager(Thread):
             manage_connections = Thread(target=self._manage_connections)
             check_results = Thread(target=self._check_results)
             manage_connections.daemon = True
-            manage_connections.start()
             check_results.daemon = True
+            manage_connections.start()
             check_results.start()
             while self.do_run:
-                time.sleep(100)
+                time.sleep(100000)
         except KeyboardInterrupt as kb_int:
             raise KeyboardInterrupt from kb_int
 
@@ -103,8 +105,6 @@ class ClientManager(Thread):
                     client_id=conn["client_id"],
                     host=REDIS_HOST,
                     port=REDIS_PORT,
-                    pub_queue=Queue(),
-                    sub_queue=Queue(),
                 )
                 req_server.daemon = True
                 req_server.start()
@@ -182,15 +182,20 @@ class ClientManager(Thread):
         while True:
             try:
                 if not self.results_queue.empty():
-                    msg: OrderedDict[str, Any] = self.results_queue.get()
-                    result: OrderedDict[str, Any] = json.loads(msg)
+                    result: OrderedDict[str, Any] = self.results_queue.get()
+                    if result["status"] == str(State.SUCCESS):
+                        self.num_tasks_complete += 1
+                    else:
+                        self.num_tasks_failed += 1
+                    logger.info(f"{self.num_tasks_complete} task(s) complete!")
+                    logger.info(f"{self.num_tasks_failed} task(s) failed!")
                     req_server: RedisServer = self.clients[result["client_id"]]
                     req_server.pub_queue.put(json.dumps(result))
                     while not req_server.publish():
                         continue
             except TypeError as json_decode_err:
                 logger.debug(json_decode_err)
-                logger.debug(f"Ignoring msg {msg}")
+                logger.debug(f"Ignoring msg {result}")
                 continue
             except KeyboardInterrupt as kb_err:
                 raise KeyboardInterrupt from kb_err

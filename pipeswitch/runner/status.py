@@ -11,7 +11,7 @@ Todo:
 from pipeswitch.common.consts import State
 
 
-class Status(object):
+class RunnerStatus(object):
     """Status class.
 
     Records the unique id and state of each runner and worker.
@@ -46,11 +46,3 @@ class Status(object):
     @property
     def status(self) -> State:
         return self._status
-
-
-class RunnerStatus(Status):
-    pass
-
-
-class WorkerStatus(Status):
-    pass
