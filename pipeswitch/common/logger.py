@@ -1,6 +1,7 @@
 """Define logger and its format."""
 import logging
 from colorama import init, Fore, Style
+import verboselogs
 
 
 class CustomFormatter(logging.Formatter):
@@ -18,6 +19,11 @@ class CustomFormatter(logging.Formatter):
     def __init__(self):
         super().__init__()
         self.formats = {
+            logging.SPAM: (
+                f"{Fore.WHITE + Style.DIM} [%(asctime)-15s"
+                "  %(levelname)s %(filename)s:%(lineno)d"
+                f" %(funcName)s]  %(message)s{Style.RESET_ALL}"
+            ),
             logging.DEBUG: (
                 f"{Fore.WHITE + Style.DIM} [%(asctime)-15s"
                 f" {Fore.BLUE} %(levelname)s %(filename)s:%(lineno)d"
@@ -25,7 +31,7 @@ class CustomFormatter(logging.Formatter):
             ),
             logging.INFO: (
                 f"{Fore.WHITE + Style.DIM} [%(asctime)-15s"
-                f" {Style.RESET_ALL}{Fore.GREEN} %(levelname)s"
+                f" {Style.RESET_ALL}{Fore.CYAN} %(levelname)s"
                 " %(filename)s:%(lineno)d %(funcName)s]"
                 f" {Fore.MAGENTA + Style.BRIGHT} %(message)s{Style.RESET_ALL}"
             ),
@@ -34,6 +40,12 @@ class CustomFormatter(logging.Formatter):
                 f" {Style.RESET_ALL}{Fore.YELLOW} %(levelname)s"
                 " %(filename)s:%(lineno)d %(funcName)s]"
                 f" {Fore.MAGENTA + Style.BRIGHT} %(message)s{Style.RESET_ALL}"
+            ),
+            logging.SUCCESS: (
+                f"{Fore.WHITE + Style.DIM} [%(asctime)-15s"
+                f" {Style.RESET_ALL}{Fore.GREEN} %(levelname)s"
+                " %(filename)s:%(lineno)d %(funcName)s]"
+                f" {Fore.GREEN + Style.BRIGHT} %(message)s{Style.RESET_ALL}"
             ),
             logging.ERROR: (
                 f"{Fore.WHITE + Style.DIM} [%(asctime)-15s"
@@ -56,12 +68,13 @@ class CustomFormatter(logging.Formatter):
 
 
 init()
+verboselogs.install()
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
+logger.setLevel(logging.SPAM)
 
 stdout_handler = logging.StreamHandler()
-stdout_handler.setLevel(logging.DEBUG)
+stdout_handler.setLevel(logging.SPAM)
 stdout_handler.setFormatter(CustomFormatter())
 
 logger.addHandler(stdout_handler)

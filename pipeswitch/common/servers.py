@@ -48,6 +48,7 @@ class RedisServer(ABC, Thread):
         client_id="",
     ) -> None:
         super().__init__()
+        self.ready: bool = False
         self.do_run: bool = True
         self._host: str = host
         self._port: int = port
@@ -72,7 +73,7 @@ class RedisServer(ABC, Thread):
     def publish(self) -> bool:
         if self.pub_channel == "":
             return True
-        if not self.pub_queue.empty():
+        while not self.pub_queue.empty():
             item = self.pub_queue.get()
             logger.debug(
                 f"{self._server_name}: publishing msg to channel"
@@ -121,6 +122,7 @@ class RedisServer(ABC, Thread):
                                 f"{self._server_name}: subscribed to channel"
                                 f" {msg['channel']}"
                             )
+                            self.ready = True
                         else:
                             logger.debug(
                                 f"{self._server_name}: msg received from"

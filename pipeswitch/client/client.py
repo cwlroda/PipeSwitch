@@ -20,8 +20,6 @@ from pipeswitch.common.servers import (
     RedisServer,
 )
 
-# from pipeswitch.task.helper import get_data
-
 
 class Client:
     def __init__(self, _model_name, _batch_size, num_it) -> None:
@@ -66,7 +64,7 @@ class Client:
                     msg: str = self.conn_server.sub_queue.get()
                     conn = json.loads(msg)
                     if conn["client_id"] == self.client_id:
-                        logger.info(
+                        logger.success(
                             f"Client {self.client_id}: Received handshake from"
                             " manager"
                         )
@@ -131,7 +129,7 @@ class Client:
                     msg: str = self.conn_server.sub_queue.get()
                     conn = json.loads(msg)
                     if conn["client_id"] == self.client_id:
-                        logger.info(
+                        logger.success(
                             f"Client {self.client_id}: Received handshake from"
                             " manager"
                         )
@@ -157,15 +155,16 @@ class Client:
                 )
 
     def _prepare_requests(self) -> None:
-        # data = get_data(self.model_name, self.batch_size).cpu().numpy().tolist()
         for _ in range(self.num_it):
             task_id = str(uuid.uuid4())
-            task_name = f"{self.model_name}_inference"
+            task_type = "inference"
+            task_key = "projects/image/saved/000025"
             msg = {
                 "client_id": self.client_id,
                 "task_id": task_id,
-                "task_name": task_name,
-                # "data": data,
+                "task_type": task_type,
+                "task_key": task_key,
+                "model_name": self.model_name,
             }
             self.task_queue.put(msg)
 
@@ -175,7 +174,8 @@ class Client:
                 msg = self.task_queue.get()
                 logger.info(
                     f"Client {self.client_id}: sending task"
-                    f" {msg['task_name']} with id {msg['task_id']}"
+                    f" {msg['model_name']} {msg['task_type']} with id"
+                    f" {msg['task_id']}"
                 )
                 json_msg = json.dumps(msg)
                 self.pending_tasks[msg["task_id"]] = msg
@@ -192,10 +192,10 @@ class Client:
                     msg: str = self.req_server.sub_queue.get()
                     result: OrderedDict[str, Any] = json.loads(msg)
                     if result["status"] == str(State.SUCCESS):
-                        logger.info(
+                        logger.success(
                             f"Client {self.client_id}: received task"
-                            f" {result['task_name']} with id"
-                            f" {result['task_id']} result {result['output']}"
+                            f" {result['model_name']} {result['task_type']} with"
+                            f" id {result['task_id']} result {result['output']}"
                         )
                         count += 1
                         self.pending_tasks.pop(result["task_id"])
@@ -205,13 +205,13 @@ class Client:
                         # TODO: push failed task back to the task queue and resend
                         logger.error(
                             f"Client {self.client_id}: task"
-                            f" {result['task_name']} with id"
-                            f" {result['task_id']} failed"
+                            f" {result['model_name']} {result['task_type']} with"
+                            f" id {result['task_id']} failed"
                         )
                         logger.debug(
                             f"Client {self.client_id}: retrying task"
-                            f" {result['task_name']} with id"
-                            f" {result['task_id']}"
+                            f" {result['model_name']} {result['task_type']} with"
+                            f" id {result['task_id']}"
                         )
                         self.task_queue.put(
                             self.pending_tasks[result["task_id"]]

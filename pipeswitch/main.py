@@ -27,7 +27,7 @@ import traceback
 def launch():
     try:
         logger.info(f"PID: {os.getpid()}")
-        os.system("redis-server redis.conf")
+        # os.system("redis-server redis.conf")
         mp.set_start_method("forkserver")
         mode = sys.argv[1]
         num_gpus = int(sys.argv[2]) if len(sys.argv) > 2 else 1

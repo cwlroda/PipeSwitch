@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 import time
 import json
-from queue import Queue
 from threading import Thread
 from typing import Any, OrderedDict
 import multiprocessing as mp
@@ -21,25 +20,27 @@ from pipeswitch.common.servers import (
 )
 
 
-class ClientManager(Thread):
-    def __init__(self, results_queue: mp.Queue) -> None:
+class ClientManager(mp.Process):
+    def __init__(
+        self, requests_queue: mp.Queue, results_queue: mp.Queue
+    ) -> None:
         super().__init__()
         self.do_run: bool = True
         self.max_clients: int = 10
-        self._conn_server: RedisServer = ManagerClientConnectionServer(
-            host=REDIS_HOST,
-            port=REDIS_PORT,
-        )
         self.clients: OrderedDict[str, RedisServer] = OrderedDict()
-        self.requests_queue: Queue = Queue()
+        self.requests_queue: mp.Queue = requests_queue
         self.results_queue: mp.Queue = results_queue
         self.num_tasks_complete: int = 0
         self.num_tasks_failed: int = 0
 
     def run(self) -> None:
         try:
-            self._conn_server.daemon = True
-            self._conn_server.start()
+            self.conn_server: RedisServer = ManagerClientConnectionServer(
+                host=REDIS_HOST,
+                port=REDIS_PORT,
+            )
+            self.conn_server.daemon = True
+            self.conn_server.start()
             manage_connections = Thread(target=self._manage_connections)
             check_results = Thread(target=self._check_results)
             manage_connections.daemon = True
@@ -53,8 +54,8 @@ class ClientManager(Thread):
 
     def _manage_connections(self) -> None:
         while True:
-            if not self._conn_server.sub_queue.empty():
-                msg: str = self._conn_server.sub_queue.get()
+            if not self.conn_server.sub_queue.empty():
+                msg: str = self.conn_server.sub_queue.get()
                 try:
                     conn: OrderedDict[str, Any] = json.loads(msg)
                     logger.info(
@@ -130,8 +131,8 @@ class ClientManager(Thread):
                     "err_msg": "Max clients reached",
                 }
                 ok = False
-            self._conn_server.pub_queue.put(json.dumps(msg))
-            while not self._conn_server.publish():
+            self.conn_server.pub_queue.put(json.dumps(msg))
+            while not self.conn_server.publish():
                 continue
             return ok
         except KeyboardInterrupt as kb_err:
@@ -145,8 +146,8 @@ class ClientManager(Thread):
                 "status": str(ResponseStatus.OK),
             }
             ok = True
-            self._conn_server.pub_queue.put(json.dumps(resp))
-            while not self._conn_server.publish():
+            self.conn_server.pub_queue.put(json.dumps(resp))
+            while not self.conn_server.publish():
                 continue
             return ok
         except KeyboardInterrupt as kb_err:
@@ -167,8 +168,9 @@ class ClientManager(Thread):
                     if "client_id" not in task:
                         task["client_id"] = client_id
                     logger.info(
-                        f"Manager: Received task {task['task_name']} from"
-                        f" client {client_id}"
+                        "Manager: Received task"
+                        f" {task['model_name']} {task['task_type']} with id"
+                        f" {task['task_id']} from client {task['client_id']}"
                     )
                     self.requests_queue.put(task)
             except TypeError as json_decode_err:
@@ -187,8 +189,11 @@ class ClientManager(Thread):
                         self.num_tasks_complete += 1
                     else:
                         self.num_tasks_failed += 1
-                    logger.info(f"{self.num_tasks_complete} task(s) complete!")
-                    logger.info(f"{self.num_tasks_failed} task(s) failed!")
+                    logger.success(
+                        f"{self.num_tasks_complete} task(s) complete!"
+                    )
+                    if self.num_tasks_failed > 0:
+                        logger.error(f"{self.num_tasks_failed} task(s) failed!")
                     req_server: RedisServer = self.clients[result["client_id"]]
                     req_server.pub_queue.put(json.dumps(result))
                     while not req_server.publish():
@@ -199,3 +204,6 @@ class ClientManager(Thread):
                 continue
             except KeyboardInterrupt as kb_err:
                 raise KeyboardInterrupt from kb_err
+
+    def ready(self) -> bool:
+        return self.conn_server.ready

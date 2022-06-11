@@ -30,11 +30,15 @@ def import_data(batch_size):
             transforms.Resize(256),
             transforms.CenterCrop(224),
             transforms.ToTensor(),
-            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+            transforms.Normalize(
+                mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
+            ),
         ]
     )
     input_tensor = preprocess(input_image)
-    image = input_tensor.unsqueeze(0)  # create a mini-batch as expected by the model
+    image = input_tensor.unsqueeze(
+        0
+    )  # create a mini-batch as expected by the model
 
     images = torch.cat([image] * batch_size)
     target = torch.tensor([0] * batch_size)
@@ -42,10 +46,15 @@ def import_data(batch_size):
 
 
 def import_model():
-    from torchvision import models
+    # from torchvision import models
 
-    model = models.resnet152(pretrained=True)
-    util.set_fullname(model, MODEL_NAME)
+    # model = models.resnet152(pretrained=True)
+    model = torch.hub.load(
+        "pytorch/vision:v0.10.0", "resnet152", pretrained=True, verbose=False
+    )
+    # print(type(model))
+    # util.set_fullname(model, MODEL_NAME)
+    # print("set_fullname")
 
     return model
 

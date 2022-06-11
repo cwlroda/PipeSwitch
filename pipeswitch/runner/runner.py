@@ -8,12 +8,16 @@ Todo:
 """
 import time
 from threading import Thread
-from typing import Any, OrderedDict, List
+from typing import Any, OrderedDict
 import multiprocessing as mp
 import torch
 import traceback
+import redis
+import json
+import urllib
+from PIL import Image
 
-from pipeswitch.common.consts import State
+from pipeswitch.common.consts import REDIS_HOST, REDIS_PORT, State
 from pipeswitch.common.logger import logger
 from pipeswitch.runner.status import (  # pylint: disable=unused-import
     RunnerStatus,
@@ -54,7 +58,6 @@ class Runner(mp.Process):
         self,
         mode: str,
         device: int,
-        model_list: List[str],
         runner_status_queue: mp.Queue,
         results_queue: mp.Queue,
     ) -> None:
@@ -62,14 +65,10 @@ class Runner(mp.Process):
         self.do_run: bool = True
         self.mode: str = mode
         self.device: int = device
-        self.model_list: List[str] = model_list
         self.runner_status_queue: mp.Queue = runner_status_queue
         self.task_queue: mp.Queue = mp.Queue()
         self.results_queue: mp.Queue = results_queue
         self.status: State = State.STARTUP
-        self.worker_status: OrderedDict[int, State] = OrderedDict()
-        self.cur_w_idx: int = 0
-        self.models = {}
         self.models_queue: mp.Queue = mp.Queue()
         self.num_tasks_complete: int = 0
         self.num_tasks_failed: int = 0
@@ -84,6 +83,12 @@ class Runner(mp.Process):
         """
         logger.debug(f"Runner {self.device}: start")
         try:
+            self._data_loader = redis.Redis(
+                host=REDIS_HOST,
+                port=REDIS_PORT,
+                encoding="utf-8",
+                decode_responses=True,
+            )
             get_tasks: Thread = Thread(target=self._get_tasks)
             get_tasks.daemon = True
             get_tasks.start()
@@ -128,24 +133,31 @@ class Runner(mp.Process):
             try:
                 if not self.task_queue.empty():
                     task = self.task_queue.get()
-                    # task: OrderedDict[str, Any] = json.loads(msg)
-                    model_name = task["task_name"]
                     logger.info(
                         f"Runner {self.device}: received task"
-                        f" {model_name} from client {task['client_id']}"
+                        f" {task['model_name']} {task['task_type']} with id"
+                        f" {task['task_id']} from client {task['client_id']}"
                     )
                     self._update_status(State.BUSY)
                     logger.debug(
                         f"Runner {self.device}: CPU debug mode task execution"
                     )
-                    self.model = torch.hub.load(
-                        "pytorch/vision:v0.10.0",
-                        "resnet152",
-                        pretrained=True,
-                        verbose=False,
-                    )
-                    # self.data = task["data"]
-                    self.model.eval()
+                    # task_type = task["task_type"]
+                    task_key = task["task_key"]
+                    # model = task["model"]
+
+                    data = self._load_data(task_key)
+                    logger.spam(data)
+                    # if task_type == "inference":
+                    #     model.eval()
+                    # elif task_type == "train":
+                    #     model.train()
+                    # else:
+                    #     logger.error(
+                    #         f"Runner {self.device}: unknown task type"
+                    #         f" {task_type}"
+                    #     )
+
                     # TODO: run inference on a proper model
                     # TODO: load data from redis store
                     # output = self._run_inference()
@@ -172,8 +184,9 @@ class Runner(mp.Process):
                     msg: OrderedDict[str, Any] = {
                         "worker_id": self.device,
                         "client_id": task["client_id"],
+                        "task_type": task["task_type"],
                         "task_id": task["task_id"],
-                        "task_name": task["task_name"],
+                        "model_name": task["model_name"],
                         "status": str(State.SUCCESS),
                         "output": output,
                     }
@@ -186,8 +199,9 @@ class Runner(mp.Process):
                 msg: OrderedDict[str, Any] = {
                     "worker_id": self.device,
                     "client_id": task["client_id"],
+                    "task_type": task["task_type"],
                     "task_id": task["task_id"],
-                    "task_name": task["task_name"],
+                    "model_name": task["model_name"],
                     "status": str(State.FAILED),
                 }
                 self.results_queue.put(msg)
@@ -199,13 +213,45 @@ class Runner(mp.Process):
                 raise KeyboardInterrupt from kb_err
 
     def _run_inference(self) -> None:
-        data = torch.cuda.FloatTensor(self.data)
-        input_batch = data.view(-1, 3, 224, 224).cuda(
-            device=self.device, non_blocking=True
-        )
-        with torch.no_grad():
-            output = self.model(input_batch)
-        return output.sum().item()
+        try:
+            data = torch.cuda.FloatTensor(self.data)
+            input_batch = data.view(-1, 3, 224, 224).cuda(
+                device=self.device, non_blocking=True
+            )
+            with torch.no_grad():
+                output = self.model(input_batch)
+            return output.sum().item()
+        except TypeError as type_err:
+            logger.error(type_err)
+        except KeyboardInterrupt as kb_err:
+            raise KeyboardInterrupt from kb_err
+
+    def _load_data(self, task_key: str) -> OrderedDict[str, Any]:
+        """Loads data from redis store"""
+        try:
+            while not self._data_loader.ping():
+                logger.error(
+                    f"Runner {self.device} data loader: connection failed!"
+                )
+                logger.error(
+                    f"Runner {self.device} data loader: reconnecting in 5s..."
+                )
+                time.sleep(5)
+            task_str = self._data_loader.get(task_key)
+            task = json.loads(task_str)
+            logger.debug(f"Runner {self.device}: retrieved task data {task}")
+            img_url = task["task"]["items"][0]["urls"]["-1"]
+            urllib.request.urlretrieve(img_url, "img.png")
+            img = Image.open("img.png")
+            return img
+        except redis.exceptions.ConnectionError as conn_err:
+            logger.error(conn_err)
+            raise redis.exceptions.ConnectionError from conn_err
+        except redis.exceptions.RedisError as redis_err:
+            logger.error(redis_err)
+            raise redis.exceptions.RedisError from redis_err
+        except KeyboardInterrupt as kb_err:
+            raise KeyboardInterrupt from kb_err
 
     @property
     def exception(self):
