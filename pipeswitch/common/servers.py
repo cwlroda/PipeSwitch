@@ -8,9 +8,11 @@ Todo:
     * None
 """
 
+import time
 from threading import Thread
 from abc import ABC, abstractmethod
-from queue import Queue  # pylint: disable=unused-import
+from queue import Queue
+from typing import Any, List, OrderedDict, Tuple
 import redis
 
 from pipeswitch.common.consts import timer, Timers
@@ -29,10 +31,10 @@ class RedisServer(ABC, Thread):
         _host (`str`): Redis host IP address.
         _port (`int`): Redis port number.
         _redis_pub (`redis.Redis`): Redis client for publishing.
-        pub_channel (`str`): Redis channel to publish to.
+        pub_stream (`str`): Redis channel to publish to.
         _pub_queue (`Queue[str]`): Queue for publishing messages.
         _redis_sub (`redis.Redis`): Redis client for subscribing.
-        sub_channel (`str`): Redis channel to subscribe to.
+        sub_stream (`str`): Redis channel to subscribe to.
         _sub_queue (`Queue[str]`): Queue for receiving messages.
         _module_id (`int`, optional): ID of the module the server is under.
         _worker_id (`int`, optional): ID of the worker the server is under.
@@ -54,77 +56,46 @@ class RedisServer(ABC, Thread):
         self._client_id: str = client_id
         self._pub_queue: "Queue[str]" = Queue()
         self._sub_queue: "Queue[str]" = Queue()
+        self._redis = redis.Redis(
+            host=self._host,
+            port=self._port,
+            encoding="utf-8",
+            decode_responses=True,
+            retry_on_timeout=True,
+        )
 
     def run(self) -> None:
         try:
-            self._create_pub()
-            self._create_sub()
-            if self.sub_channel == "":
-                return
-            self._pubsub.subscribe(self.sub_channel)
-            self._listen()
-        except KeyboardInterrupt as kb_int:
-            raise KeyboardInterrupt from kb_int
+            if self._redis.ping():
+                self.ready = True
+            else:
+                logger.error(f"{self._server_name}: connection failed!")
+            while self.do_run:
+                msg: Tuple[str, OrderedDict[str, Any]] = self._redis.xread(
+                    streams={self.sub_stream: "$"}, count=None, block=0
+                )
+                if msg is not None:
+                    self._process_msg(msg)
+        except KeyboardInterrupt as _:
+            return
 
     @timer(Timers.PERF_COUNTER)
     def publish(self) -> None:
-        if self.pub_channel == "":
+        if self.pub_stream == "":
             return
-        item = self.pub_queue.get()
+        item: OrderedDict[str, Any] = self.pub_queue.get()
         logger.debug(
-            f"{self._server_name}: publishing msg to channel {self.pub_channel}"
+            f"{self._server_name}: publishing msg to stream {self.pub_stream}"
         )
-        self._redis_pub.publish(self.pub_channel, item)
+        self._redis.xadd(self.pub_stream, item)
+        time.sleep(0.001)
 
     @timer(Timers.PERF_COUNTER)
-    def _create_pub(self) -> None:
-        self._redis_pub = redis.Redis(
-            host=self._host,
-            port=self._port,
-            encoding="utf-8",
-            decode_responses=True,
-        )
-        if not self._redis_pub.ping():
-            logger.error(f"{self._server_name}-pub: connection failed!")
-
-    @timer(Timers.PERF_COUNTER)
-    def _create_sub(self) -> None:
-        self._redis_sub = redis.Redis(
-            host=self._host,
-            port=self._port,
-            encoding="utf-8",
-            decode_responses=True,
-        )
-        if not self._redis_sub.ping():
-            logger.error(f"{self._server_name}-sub: connection failed!")
-        self._pubsub: redis.client.PubSub = self._redis_sub.pubsub()
-
-    def _listen(self) -> None:
-        try:
-            for msg in self._pubsub.listen():  # type: ignore
-                if msg is not None:
-                    self._process_msg(msg)
-        except KeyboardInterrupt as kb_int:
-            raise KeyboardInterrupt from kb_int
-
-    @timer(Timers.PERF_COUNTER)
-    def _process_msg(self, msg: str) -> None:
-        if msg["data"] == 0:
-            logger.error(
-                f"{self._server_name}: error subscribing to"
-                f" channel {msg['channel']}"
-            )
-        elif msg["data"] == 1:
-            logger.info(
-                f"{self._server_name}: subscribed to channel {msg['channel']}"
-            )
-            self.ready = True
-        else:
-            logger.debug(
-                f"{self._server_name}: msg received from"
-                f" channel {msg['channel']}"
-            )
-            self.sub_queue.put(msg["data"])
+    def _process_msg(self, msg: List[Any]) -> None:
+        for msg_item in msg:
+            entry_id, entry = msg_item[1][0]
+            self.sub_queue.put(entry)
+            self._redis.xdel(self.sub_stream, entry_id)
 
     @property
     @abstractmethod
@@ -133,12 +104,12 @@ class RedisServer(ABC, Thread):
 
     @property
     @abstractmethod
-    def pub_channel(self) -> str:
+    def pub_stream(self) -> str:
         pass
 
     @property
     @abstractmethod
-    def sub_channel(self) -> str:
+    def sub_stream(self) -> str:
         pass
 
     @property
@@ -161,11 +132,11 @@ class ManagerClientConnectionServer(RedisServer):
         return "ManagerClientConnectionServer"
 
     @property
-    def pub_channel(self) -> str:
+    def pub_stream(self) -> str:
         return "HANDSHAKES"
 
     @property
-    def sub_channel(self) -> str:
+    def sub_stream(self) -> str:
         return "CONNECTIONS"
 
 
@@ -183,14 +154,14 @@ class ManagerClientRequestsServer(RedisServer):
             return "ManagerClientRequestsServer"
 
     @property
-    def pub_channel(self) -> str:
+    def pub_stream(self) -> str:
         if self._client_id != "":
             return f"RESPONSES-{self._client_id}"
         else:
             return "RESPONSES"
 
     @property
-    def sub_channel(self) -> str:
+    def sub_stream(self) -> str:
         if self._client_id != "":
             return f"REQUESTS-{self._client_id}"
         else:
@@ -211,11 +182,11 @@ class ClientConnectionServer(RedisServer):
             return "ClientConnectionServer"
 
     @property
-    def pub_channel(self) -> str:
+    def pub_stream(self) -> str:
         return "CONNECTIONS"
 
     @property
-    def sub_channel(self) -> str:
+    def sub_stream(self) -> str:
         return "HANDSHAKES"
 
 
@@ -233,14 +204,14 @@ class ClientRequestsServer(RedisServer):
             return "ClientRequestsServer"
 
     @property
-    def pub_channel(self) -> str:
+    def pub_stream(self) -> str:
         if self._client_id != "":
             return f"REQUESTS-{self._client_id}"
         else:
             return "REQUESTS"
 
     @property
-    def sub_channel(self) -> str:
+    def sub_stream(self) -> str:
         if self._client_id != "":
             return f"RESPONSES-{self._client_id}"
         else:

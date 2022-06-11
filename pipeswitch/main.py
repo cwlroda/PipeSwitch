@@ -32,14 +32,11 @@ def launch():
         mode = sys.argv[1]
         num_gpus = int(sys.argv[2]) if len(sys.argv) > 2 else 1
         manager: Manager = Manager(mode=mode, num_gpus=num_gpus)
+        manager.daemon = True
         manager.start()
         manager.join()
-    except TypeError as type_err:
-        logger.warning(type_err)
-        logger.warning(traceback.format_exc())
-        logger.warning("Handling stray event loops")
-
-    logger.info("Main: Exiting")
+    except KeyboardInterrupt as _:
+        manager.shutdown()
 
 
 if __name__ == "__main__":

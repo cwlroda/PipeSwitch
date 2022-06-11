@@ -1,9 +1,9 @@
 black
 colorama
+coloredlogs
 conda
 gpustat
 isort
-jsonpickle
 mypy
 mypy-extensions
 numpy
@@ -15,3 +15,4 @@ redis
 types-redis
 types-setuptools
 typing_extensions
+verboselogs

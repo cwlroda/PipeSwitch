@@ -6,6 +6,7 @@ This module spawns workers and allocates tasks to available workers.
 Todo:
     * None
 """
+import os
 import time
 from typing import Any, OrderedDict
 import multiprocessing as mp
@@ -15,6 +16,7 @@ import redis
 import json
 import urllib
 from PIL import Image
+from pprint import pformat
 
 from pipeswitch.common.consts import (
     REDIS_HOST,
@@ -24,9 +26,7 @@ from pipeswitch.common.consts import (
     Timers,
 )
 from pipeswitch.common.logger import logger
-from pipeswitch.runner.status import (  # pylint: disable=unused-import
-    RunnerStatus,
-)
+from pipeswitch.runner.status import RunnerStatus
 
 
 class Runner(mp.Process):
@@ -111,13 +111,8 @@ class Runner(mp.Process):
             logger.error(runtime_err)
             tb = traceback.format_exc()
             self._cconn.send((runtime_err, tb))
-        except BrokenPipeError as bp_error:
-            logger.error(bp_error)
-            tb = traceback.format_exc()
-            self._cconn.send((bp_error, tb))
-        except KeyboardInterrupt as kb_int:
-            tb = traceback.format_exc()
-            self._cconn.send((kb_int, tb))
+        except KeyboardInterrupt as _:
+            return
 
     @timer(Timers.PERF_COUNTER)
     def _update_status(self, status: State) -> None:
@@ -248,10 +243,15 @@ class Runner(mp.Process):
                 f" {self.task['model_name']} {self.task['task_type']} with id"
                 f" {self.task['task_id']} from client {self.task['client_id']}"
             )
-            logger.spam(data)
+            logger.spam(f"\n{pformat(object=data, indent=1, width=1)}")
             img_url = data["task"]["items"][0]["urls"]["-1"]
-            urllib.request.urlretrieve(img_url, "img.png")
-            img = Image.open("img.png")
+            img_name = img_url.split("/")[-1]
+            if not os.path.exists(img_name):
+                logger.debug(
+                    f"Runner {self.device}: Downloading image {img_name}..."
+                )
+                urllib.request.urlretrieve(img_url, img_name)
+            img = Image.open(img_name)
             return img
         except redis.exceptions.ConnectionError as conn_err:
             logger.error(conn_err)

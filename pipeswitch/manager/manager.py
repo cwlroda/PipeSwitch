@@ -19,6 +19,7 @@ from threading import Thread
 from typing import Any, List, OrderedDict
 import torch
 import torch.multiprocessing as mp
+from pprint import pformat
 
 from pipeswitch.common.consts import timer, Timers
 from pipeswitch.common.logger import logger
@@ -91,44 +92,39 @@ class Manager(Thread):
                 "***********************************"
             )
             logger.debug("Manager: Waiting for at least one runner to be ready")
-            while len(self.scheduler.runner_status) < 1:
+            while len(self.scheduler.runner_status) < 1 or len(
+                self.models
+            ) != len(self.model_list):
                 time.sleep(0.001)
             logger.success("Manager: Ready to execute tasks!")
             while self.do_run:
                 task: OrderedDict[str, Any] = self.requests_queue.get()
                 self._allocate_tasks(task)
         except KeyboardInterrupt as _:
-            logger.warning("Manager: Shutting down")
-            if self.mode == "gpu":
-                self.gra.release_gpus()
-            self.do_run = False
-            logger.info("Manager: Successfully shut down")
+            return
 
     @timer(Timers.PROCESS_TIMER)
     def _setup(self) -> None:
         """Run setup tasks in the manager."""
         logger.info("Manager: Start")
-        try:
-            self.client_manager.daemon = True
-            self.client_manager.start()
-            if self.mode == "gpu":
-                self.gra.cuda_init()
-                self.allocated_gpus = self.gra.reserve_gpus(self.num_gpus)
-                logger.info(f"Allocated GPUs: {self.allocated_gpus}")
-                self.gra.warmup_gpus(gpus=self.allocated_gpus)
-            else:
-                self.allocated_gpus = [*range(self.num_gpus)]
-            self._load_models()
-            self.scheduler: Scheduler = Scheduler(
-                num_runners=self.allocated_gpus,
-                runner_status=self.runner_status,
-                runner_status_queue=self.runner_status_queue,
-            )
-            self.scheduler.daemon = True
-            self.scheduler.start()
-            self._create_runners()
-        except KeyboardInterrupt as kb_int:
-            raise KeyboardInterrupt from kb_int
+        self.client_manager.daemon = True
+        self.client_manager.start()
+        if self.mode == "gpu":
+            self.gra.cuda_init()
+            self.allocated_gpus = self.gra.reserve_gpus(self.num_gpus)
+            logger.info(f"Allocated GPUs: {self.allocated_gpus}")
+            self.gra.warmup_gpus(gpus=self.allocated_gpus)
+        else:
+            self.allocated_gpus = [*range(self.num_gpus)]
+        self._load_models()
+        self.scheduler: Scheduler = Scheduler(
+            num_runners=self.allocated_gpus,
+            runner_status=self.runner_status,
+            runner_status_queue=self.runner_status_queue,
+        )
+        self.scheduler.daemon = True
+        self.scheduler.start()
+        self._create_runners()
 
     @timer(Timers.PERF_COUNTER)
     def _load_model_list(self, file_name: str) -> None:
@@ -147,14 +143,14 @@ class Manager(Thread):
 
     def _load_models(self) -> None:
         self._load_model_list(file_name="model_list.txt")
-        load_models = [
+        self.load_models = [
             Thread(
                 target=self._load_model,
                 args=(model_name,),
             )
             for model_name in self.model_list
         ]
-        for load_model in load_models:
+        for load_model in self.load_models:
             load_model.daemon = True
             load_model.start()
 
@@ -165,7 +161,7 @@ class Manager(Thread):
         model_module = importlib.import_module("pipeswitch.task." + model_name)
         # logger.debug(f"Manager: importing {model_name} parameters")
         model = model_module.import_model()
-        logger.spam(model)
+        logger.spam(f"\n{pformat(object=model, indent=1, width=1)}")
         logger.debug(f"Manager: loaded model {model_name}")
 
         # Preprocess batches
@@ -189,47 +185,54 @@ class Manager(Thread):
             num_workers (`int`, optional):
                 number of workers to create per runner, default 2.
         """
-        try:
-            for runner_id in self.allocated_gpus:
-                if self.mode == "gpu":
-                    torch.cuda.set_device(device=runner_id)
-                runner: mp.Process = Runner(
-                    mode=self.mode,
-                    device=runner_id,
-                    runner_status_queue=self.runner_status_queue,
-                    results_queue=self.results_queue,
-                )
-                runner.daemon = True
-                runner.start()
-                if runner.exception is not None:
-                    logger.error(
-                        f"Manager exception caught: {runner.exception[0]}"
-                    )
-                    raise KeyboardInterrupt from runner.exception[0]
-                self.runners[runner_id] = runner
-                logger.info(f"Created runner in GPU {runner_id}")
-                # break
-        except KeyboardInterrupt as kb_int:
-            raise KeyboardInterrupt from kb_int
+        for runner_id in self.allocated_gpus:
+            if self.mode == "gpu":
+                torch.cuda.set_device(device=runner_id)
+            runner: mp.Process = Runner(
+                mode=self.mode,
+                device=runner_id,
+                runner_status_queue=self.runner_status_queue,
+                results_queue=self.results_queue,
+            )
+            runner.daemon = True
+            runner.start()
+            if runner.exception is not None:
+                logger.error(f"Manager exception caught: {runner.exception[0]}")
+                raise KeyboardInterrupt from runner.exception[0]
+            self.runners[runner_id] = runner
+            logger.info(f"Created runner in GPU {runner_id}")
+            # break
 
     @timer(Timers.PROCESS_TIMER)
     def _allocate_tasks(self, task: OrderedDict[str, Any]) -> None:
-        try:
-            runner_id = self.scheduler.schedule()
-            msg: OrderedDict[str, Any] = {
-                "client_id": task["client_id"],
-                "task_id": task["task_id"],
-                "task_type": task["task_type"],
-                "task_key": task["task_key"],
-                "model_name": task["model_name"],
-                # "model": self.models[task["model_name"]]
-            }
-            logger.info(
-                "Assigning task"
-                f" {task['model_name']} {task['task_type']} with id"
-                f" {task['task_id']} from client {task['client_id']} to"
-                f" runner {runner_id}"
-            )
-            self.runners[runner_id].task_queue.put(msg)
-        except KeyboardInterrupt as kb_err:
-            raise KeyboardInterrupt from kb_err
+        runner_id = self.scheduler.schedule()
+        msg: OrderedDict[str, Any] = {
+            "client_id": task["client_id"],
+            "task_id": task["task_id"],
+            "task_type": task["task_type"],
+            "task_key": task["task_key"],
+            "model_name": task["model_name"],
+            # "model": self.models[task["model_name"]]
+        }
+        logger.info(
+            "Assigning task"
+            f" {task['model_name']} {task['task_type']} with id"
+            f" {task['task_id']} from client {task['client_id']} to"
+            f" runner {runner_id}"
+        )
+        self.runners[runner_id].task_queue.put(msg)
+
+    @timer(Timers.PERF_COUNTER)
+    def shutdown(self) -> None:
+        logger.warning("Manager: Shutting down")
+        self.client_manager.terminate()
+        logger.warning("Terminated client manager")
+        self.scheduler.terminate()
+        logger.warning("Terminated scheduler")
+        for runner in self.runners.values():
+            runner.terminate()
+        logger.warning("Terminated runners")
+        self.do_run = False
+        if self.mode == "gpu":
+            self.gra.release_gpus()
+        logger.info("Manager: Successfully shut down")

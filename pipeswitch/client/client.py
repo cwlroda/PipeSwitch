@@ -1,5 +1,5 @@
-import json
 import sys
+import time
 import uuid
 from queue import Queue
 from typing import Any, OrderedDict
@@ -40,15 +40,18 @@ class Client:
 
     @timer(Timers.PERF_COUNTER)
     def run(self) -> None:
-        self.conn_server.daemon = True
-        self.conn_server.start()
-        self._connect()
-        self._prepare_requests()
-        send_requests = Thread(target=self._send_requests)
-        send_requests.daemon = True
-        send_requests.start()
-        self._receive_results()
-        self._disconnect()
+        try:
+            self.conn_server.daemon = True
+            self.conn_server.start()
+            self._connect()
+            self._prepare_requests()
+            send_requests = Thread(target=self._send_requests)
+            send_requests.daemon = True
+            send_requests.start()
+            self._receive_results()
+            self._disconnect()
+        except KeyboardInterrupt as _:
+            self._shutdown()
 
     @timer(Timers.PERF_COUNTER)
     def _connect(self) -> None:
@@ -56,49 +59,41 @@ class Client:
             "client_id": self.client_id,
             "request": str(ConnectionRequest.CONNECT),
         }
-        json_msg = json.dumps(msg)
-        self.conn_server.pub_queue.put(json_msg)
+        self.conn_server.pub_queue.put(msg)
         self.conn_server.publish()
 
-        try:
-            msg: str = self.conn_server.sub_queue.get()
-            conn = json.loads(msg)
-            if conn["client_id"] == self.client_id:
-                logger.success(
-                    f"Client {self.client_id}: Received handshake from manager"
+        conn: OrderedDict[str, Any] = self.conn_server.sub_queue.get()
+        if conn["client_id"] == self.client_id:
+            logger.success(
+                f"Client {self.client_id}: Received handshake from manager"
+            )
+            if conn["status"] == str(ResponseStatus.OK):
+                self.req_server = ClientRequestsServer(
+                    client_id=self.client_id,
+                    host=conn["host"],
+                    port=conn["port"],
                 )
-                if conn["status"] == str(ResponseStatus.OK):
-                    self.req_server = ClientRequestsServer(
-                        client_id=self.client_id,
-                        host=conn["host"],
-                        port=conn["port"],
-                    )
-                    if self.req_server.pub_channel != conn["requests_channel"]:
-                        logger.error(
-                            "Channel mismatch:"
-                            f" {self.req_server.pub_channel} !="
-                            f" {conn['requests_channel']}"
-                        )
-                    if self.req_server.sub_channel != conn["results_channel"]:
-                        logger.error(
-                            "Channel mismatch:"
-                            f" {self.req_server.sub_channel} !="
-                            f" {conn['results_channel']}"
-                        )
-                    self.req_server.daemon = True
-                    self.req_server.start()
-
-                elif conn["status"] == str(ResponseStatus.ERROR):
+                if self.req_server.pub_stream != conn["requests_stream"]:
                     logger.error(
-                        f"Client {self.client_id} error msg: {conn['err_msg']}"
+                        "Stream mismatch:"
+                        f" {self.req_server.pub_stream} !="
+                        f" {conn['requests_stream']}"
                     )
-                    sys.exit(1)
-            else:
-                logger.debug(
-                    f"Client {self.client_id}: Ignoring invalid handshake {msg}"
+                if self.req_server.sub_stream != conn["results_stream"]:
+                    logger.error(
+                        "Stream mismatch:"
+                        f" {self.req_server.sub_stream} !="
+                        f" {conn['results_stream']}"
+                    )
+                self.req_server.daemon = True
+                self.req_server.start()
+
+            elif conn["status"] == str(ResponseStatus.ERROR):
+                logger.error(
+                    f"Client {self.client_id} error msg: {conn['err_msg']}"
                 )
-        except TypeError as json_decode_err:
-            logger.debug(json_decode_err)
+                sys.exit(1)
+        else:
             logger.debug(
                 f"Client {self.client_id}: Ignoring invalid handshake {msg}"
             )
@@ -109,32 +104,24 @@ class Client:
             "client_id": self.client_id,
             "request": str(ConnectionRequest.DISCONNECT),
         }
-        json_msg = json.dumps(msg)
-        self.conn_server.pub_queue.put(json_msg)
+        self.conn_server.pub_queue.put(msg)
         self.conn_server.publish()
 
-        try:
-            msg: str = self.conn_server.sub_queue.get()
-            conn = json.loads(msg)
-            if conn["client_id"] == self.client_id:
-                logger.success(
-                    f"Client {self.client_id}: Received handshake from manager"
-                )
-                if conn["status"] == str(ResponseStatus.OK):
-                    logger.info("Client: Disconnecting...")
-                    return
+        conn: OrderedDict[str, Any] = self.conn_server.sub_queue.get()
+        if conn["client_id"] == self.client_id:
+            logger.success(
+                f"Client {self.client_id}: Received handshake from manager"
+            )
+            if conn["status"] == str(ResponseStatus.OK):
+                logger.info("Client: Disconnecting...")
+                return
 
-                elif conn["status"] == str(ResponseStatus.ERROR):
-                    logger.error(
-                        f"Client {self.client_id} error msg: {conn['err_msg']}"
-                    )
-                    sys.exit(1)
-            else:
-                logger.debug(
-                    f"Client {self.client_id}: Ignoring invalid handshake {msg}"
+            elif conn["status"] == str(ResponseStatus.ERROR):
+                logger.error(
+                    f"Client {self.client_id} error msg: {conn['err_msg']}"
                 )
-        except TypeError as json_decode_err:
-            logger.debug(json_decode_err)
+                sys.exit(1)
+        else:
             logger.debug(
                 f"Client {self.client_id}: Ignoring invalid handshake {msg}"
             )
@@ -166,47 +153,46 @@ class Client:
             f" {msg['model_name']} {msg['task_type']} with id"
             f" {msg['task_id']}"
         )
-        json_msg = json.dumps(msg)
         self.pending_tasks[msg["task_id"]] = msg
-        self.req_server.pub_queue.put(json_msg)
+        self.req_server.pub_queue.put(msg)
         self.req_server.publish()
+        time.sleep(0.001)  # Necessary to avoid missing messages
 
     @timer(Timers.PERF_COUNTER)
     def _receive_results(self) -> None:
         count = 0
         while count != self.num_it:
-            try:
-                msg: str = self.req_server.sub_queue.get()
-                result: OrderedDict[str, Any] = json.loads(msg)
-                if result["status"] == str(State.SUCCESS):
-                    logger.success(
-                        f"Client {self.client_id}: received task"
-                        f" {result['model_name']} {result['task_type']} with"
-                        f" id {result['task_id']} result {result['output']}"
-                    )
-                    count += 1
-                    self.pending_tasks.pop(result["task_id"])
-                    # TODO: store results in the client
-                else:
-                    # TODO: handle failed task
-                    # TODO: push failed task back to the task queue and resend
-                    logger.error(
-                        f"Client {self.client_id}: task"
-                        f" {result['model_name']} {result['task_type']} with"
-                        f" id {result['task_id']} failed"
-                    )
-                    logger.debug(
-                        f"Client {self.client_id}: retrying task"
-                        f" {result['model_name']} {result['task_type']} with"
-                        f" id {result['task_id']}"
-                    )
-                    self.task_queue.put(self.pending_tasks[result["task_id"]])
-
-            except TypeError as json_decode_err:
-                logger.debug(json_decode_err)
-                logger.debug(
-                    f"Client {self.client_id}: Ignoring invalid handshake {msg}"
+            result: OrderedDict[str, Any] = self.req_server.sub_queue.get()
+            if result["status"] == str(State.SUCCESS):
+                logger.success(
+                    f"Client {self.client_id}: received task"
+                    f" {result['model_name']} {result['task_type']} with"
+                    f" id {result['task_id']} result {result['output']}"
                 )
+                count += 1
+                logger.info(
+                    f"Client {self.client_id}: completed tasks"
+                    f" {count}/{self.num_it}"
+                )
+                self.pending_tasks.pop(result["task_id"])
+                # TODO: store results in the client
+            else:
+                # TODO: handle failed task
+                # TODO: push failed task back to the task queue and resend
+                logger.error(
+                    f"Client {self.client_id}: task"
+                    f" {result['model_name']} {result['task_type']} with"
+                    f" id {result['task_id']} failed"
+                )
+                logger.debug(
+                    f"Client {self.client_id}: retrying task"
+                    f" {result['model_name']} {result['task_type']} with"
+                    f" id {result['task_id']}"
+                )
+                self.task_queue.put(self.pending_tasks[result["task_id"]])
+
+    def _shutdown(self) -> None:
+        logger.warning(f"Client {self.client_id}: shutting down")
 
 
 if __name__ == "__main__":

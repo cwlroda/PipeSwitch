@@ -115,11 +115,15 @@ class GPUResourceAllocator:
     @timer(Timers.PERF_COUNTER)
     def release_gpus(self) -> None:
         """Release all reserved GPUS."""
-        if "CUDA_VISIBLE_DEVICES" not in os.environ:
+        if (
+            "CUDA_VISIBLE_DEVICES" not in os.environ
+            or os.environ["CUDA_VISIBLE_DEVICES"] == ""
+        ):
             return
-        if os.environ["CUDA_VISIBLE_DEVICES"] != "":
-            os.environ["CUDA_VISIBLE_DEVICES"] = ""
-            logger.debug("Releasing all GPUs")
+        logger.warning(
+            f"Releasing all GPUs: {os.environ['CUDA_VISIBLE_DEVICES']}"
+        )
+        os.environ["CUDA_VISIBLE_DEVICES"] = ""
 
     def _get_gpus(self) -> OrderedDict[int, GPUStat]:
         """Uses gpustat to query all GPUs in the system.

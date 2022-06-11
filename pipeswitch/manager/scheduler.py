@@ -39,33 +39,30 @@ class Scheduler(mp.Process):
         self._runner_status_queue: mp.Queue = runner_status_queue
 
     def run(self) -> None:
-        while self._do_run:
-            try:
+        try:
+            while self._do_run:
                 status: RunnerStatus = self._runner_status_queue.get()
                 self._runner_status[status.device] = status.status
                 logger.debug(
                     "Scheduler status update: Runner"
                     f" {status.device} {status.status}"
                 )
-            except KeyboardInterrupt as kb_err:
-                raise KeyboardInterrupt from kb_err
+        except KeyboardInterrupt as _:
+            return
 
     @timer(Timers.PROCESS_TIMER)
     def schedule(self) -> int:
-        try:
+        free_runners = self._get_free_runners()
+        while len(free_runners) < 1:
+            time.sleep(0.25)
             free_runners = self._get_free_runners()
-            while len(free_runners) < 1:
-                time.sleep(0.25)
-                free_runners = self._get_free_runners()
 
-            next_available_runner: int = self._policy.select_next(free_runners)
-            self.runner_status[next_available_runner] = State.RESERVED
-            logger.debug(
-                f"Scheduler: Next available runner is {next_available_runner}"
-            )
-            return next_available_runner
-        except KeyboardInterrupt as kb_err:
-            raise KeyboardInterrupt from kb_err
+        next_available_runner: int = self._policy.select_next(free_runners)
+        self.runner_status[next_available_runner] = State.RESERVED
+        logger.debug(
+            f"Scheduler: Next available runner is {next_available_runner}"
+        )
+        return next_available_runner
 
     @property
     def runner_idx(self) -> List[int]:
@@ -76,11 +73,8 @@ class Scheduler(mp.Process):
         return self._runner_status
 
     def _get_free_runners(self) -> List[int]:
-        try:
-            free_runners: List[int] = []
-            for runner_id, status in self.runner_status.items():
-                if status == State.IDLE:
-                    free_runners.append(runner_id)
-            return free_runners
-        except KeyboardInterrupt as kb_err:
-            raise KeyboardInterrupt from kb_err
+        free_runners: List[int] = []
+        for runner_id, status in self.runner_status.items():
+            if status == State.IDLE:
+                free_runners.append(runner_id)
+        return free_runners
