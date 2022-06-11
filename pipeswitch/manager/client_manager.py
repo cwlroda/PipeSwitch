@@ -11,6 +11,8 @@ from pipeswitch.common.consts import (
     REDIS_PORT,
     ResponseStatus,
     State,
+    timer,
+    Timers,
 )
 from pipeswitch.common.logger import logger
 from pipeswitch.common.servers import (
@@ -21,6 +23,7 @@ from pipeswitch.common.servers import (
 
 
 class ClientManager(mp.Process):
+    @timer(Timers.PERF_COUNTER)
     def __init__(
         self, requests_queue: mp.Queue, results_queue: mp.Queue
     ) -> None:
@@ -41,64 +44,59 @@ class ClientManager(mp.Process):
             )
             self.conn_server.daemon = True
             self.conn_server.start()
-            manage_connections = Thread(target=self._manage_connections)
             check_results = Thread(target=self._check_results)
-            manage_connections.daemon = True
             check_results.daemon = True
-            manage_connections.start()
             check_results.start()
             while self.do_run:
-                time.sleep(100000)
+                msg: str = self.conn_server.sub_queue.get()
+                self._manage_connections(msg)
         except KeyboardInterrupt as kb_int:
             raise KeyboardInterrupt from kb_int
 
-    def _manage_connections(self) -> None:
-        while True:
-            if not self.conn_server.sub_queue.empty():
-                msg: str = self.conn_server.sub_queue.get()
-                try:
-                    conn: OrderedDict[str, Any] = json.loads(msg)
-                    logger.info(
-                        "ClientManager: Received connection request from"
+    @timer(Timers.PERF_COUNTER)
+    def _manage_connections(self, msg) -> None:
+        try:
+            conn: OrderedDict[str, Any] = json.loads(msg)
+            logger.info(
+                "ClientManager: Received connection request from"
+                f" client {conn['client_id']}"
+            )
+            if conn["request"] == str(ConnectionRequest.CONNECT):
+                resp = self._connect(conn)
+                if resp:
+                    logger.debug(
+                        "ClientManager: Connection to client"
+                        f" {conn['client_id']} established"
+                    )
+                else:
+                    logger.debug(
+                        "ClientManager: Connection to client"
+                        f" {conn['client_id']} rejected"
+                    )
+            elif conn["request"] == str(ConnectionRequest.DISCONNECT):
+                resp = self._disconnect(conn)
+                if resp:
+                    logger.debug(
+                        "ClientManager: Connection to client"
+                        f" {conn['client_id']} closed"
+                    )
+                else:
+                    logger.debug(
+                        "ClientManager: Unknown connection request from"
                         f" client {conn['client_id']}"
                     )
-                    if conn["request"] == str(ConnectionRequest.CONNECT):
-                        resp = self._connect(conn)
-                        if resp:
-                            logger.debug(
-                                "ClientManager: Connection to client"
-                                f" {conn['client_id']} established"
-                            )
-                        else:
-                            logger.debug(
-                                "ClientManager: Connection to client"
-                                f" {conn['client_id']} rejected"
-                            )
-                    elif conn["request"] == str(ConnectionRequest.DISCONNECT):
-                        resp = self._disconnect(conn)
-                        if resp:
-                            logger.debug(
-                                "ClientManager: Connection to client"
-                                f" {conn['client_id']} closed"
-                            )
-                        else:
-                            logger.debug(
-                                "ClientManager: Unknown connection request from"
-                                f" client {conn['client_id']}"
-                            )
-                    else:
-                        logger.debug(
-                            "ClientManager: Unknown connection request from"
-                            f" client {conn['client_id']}"
-                        )
-                except TypeError as json_decode_err:
-                    logger.debug(json_decode_err)
-                    logger.debug(
-                        f"Ignoring invalid client connection request: {msg}"
-                    )
-                except KeyboardInterrupt as kb_err:
-                    raise KeyboardInterrupt from kb_err
+            else:
+                logger.debug(
+                    "ClientManager: Unknown connection request from"
+                    f" client {conn['client_id']}"
+                )
+        except TypeError as json_decode_err:
+            logger.debug(json_decode_err)
+            logger.debug(f"Ignoring invalid client connection request: {msg}")
+        except KeyboardInterrupt as kb_err:
+            raise KeyboardInterrupt from kb_err
 
+    @timer(Timers.PERF_COUNTER)
     def _connect(self, conn: OrderedDict[str, Any]) -> None:
         try:
             if len(self.clients) < self.max_clients:
@@ -132,12 +130,12 @@ class ClientManager(mp.Process):
                 }
                 ok = False
             self.conn_server.pub_queue.put(json.dumps(msg))
-            while not self.conn_server.publish():
-                continue
+            self.conn_server.publish()
             return ok
         except KeyboardInterrupt as kb_err:
             raise KeyboardInterrupt from kb_err
 
+    @timer(Timers.PERF_COUNTER)
     def _disconnect(self, conn: OrderedDict[str, Any]) -> None:
         try:
             self.clients.pop(conn["client_id"])
@@ -147,8 +145,7 @@ class ClientManager(mp.Process):
             }
             ok = True
             self.conn_server.pub_queue.put(json.dumps(resp))
-            while not self.conn_server.publish():
-                continue
+            self.conn_server.publish()
             return ok
         except KeyboardInterrupt as kb_err:
             raise KeyboardInterrupt from kb_err
@@ -156,54 +153,55 @@ class ClientManager(mp.Process):
     def _check_client_reqs(self, client_id) -> None:
         try:
             while client_id not in self.clients:
-                time.sleep(0.1)
+                time.sleep(0.001)
             client: RedisServer = self.clients[client_id]
         except KeyboardInterrupt as kb_err:
             raise KeyboardInterrupt from kb_err
+
         while True:
-            try:
-                if not client.sub_queue.empty():
-                    msg: str = client.sub_queue.get()
-                    task: OrderedDict[str, Any] = json.loads(msg)
-                    if "client_id" not in task:
-                        task["client_id"] = client_id
-                    logger.info(
-                        "Manager: Received task"
-                        f" {task['model_name']} {task['task_type']} with id"
-                        f" {task['task_id']} from client {task['client_id']}"
-                    )
-                    self.requests_queue.put(task)
-            except TypeError as json_decode_err:
-                logger.debug(json_decode_err)
-                logger.debug(f"Ignoring msg {msg}")
-                continue
-            except KeyboardInterrupt as kb_err:
-                raise KeyboardInterrupt from kb_err
+            msg: str = client.sub_queue.get()
+            self._check_client_req(msg)
+
+    @timer(Timers.PERF_COUNTER)
+    def _check_client_req(self, msg: str) -> None:
+        try:
+            task: OrderedDict[str, Any] = json.loads(msg)
+            logger.info(
+                "Client Manager: Received task"
+                f" {task['model_name']} {task['task_type']} with id"
+                f" {task['task_id']} from client {task['client_id']}"
+            )
+            self.requests_queue.put(task)
+        except TypeError as json_decode_err:
+            logger.debug(json_decode_err)
+            logger.debug(f"Ignoring msg {msg}")
+        except KeyboardInterrupt as kb_err:
+            raise KeyboardInterrupt from kb_err
 
     def _check_results(self) -> None:
         while True:
-            try:
-                if not self.results_queue.empty():
-                    result: OrderedDict[str, Any] = self.results_queue.get()
-                    if result["status"] == str(State.SUCCESS):
-                        self.num_tasks_complete += 1
-                    else:
-                        self.num_tasks_failed += 1
-                    logger.success(
-                        f"{self.num_tasks_complete} task(s) complete!"
-                    )
-                    if self.num_tasks_failed > 0:
-                        logger.error(f"{self.num_tasks_failed} task(s) failed!")
-                    req_server: RedisServer = self.clients[result["client_id"]]
-                    req_server.pub_queue.put(json.dumps(result))
-                    while not req_server.publish():
-                        continue
-            except TypeError as json_decode_err:
-                logger.debug(json_decode_err)
-                logger.debug(f"Ignoring msg {result}")
-                continue
-            except KeyboardInterrupt as kb_err:
-                raise KeyboardInterrupt from kb_err
+            result: OrderedDict[str, Any] = self.results_queue.get()
+            self._check_result(result)
+
+    @timer(Timers.PERF_COUNTER)
+    def _check_result(self, result: OrderedDict[str, Any]) -> None:
+        try:
+            if result["status"] == str(State.SUCCESS):
+                self.num_tasks_complete += 1
+            else:
+                self.num_tasks_failed += 1
+            logger.success(f"{self.num_tasks_complete} task(s) complete!")
+            if self.num_tasks_failed > 0:
+                logger.error(f"{self.num_tasks_failed} task(s) failed!")
+            req_server: RedisServer = self.clients[result["client_id"]]
+            req_server.pub_queue.put(json.dumps(result))
+            req_server.publish()
+
+        except TypeError as json_decode_err:
+            logger.debug(json_decode_err)
+            logger.debug(f"Ignoring msg {result}")
+        except KeyboardInterrupt as kb_err:
+            raise KeyboardInterrupt from kb_err
 
     def ready(self) -> bool:
         return self.conn_server.ready

@@ -13,6 +13,7 @@ from typing import OrderedDict, List
 from gpustat import GPUStat, GPUStatCollection  # type: ignore
 import torch
 
+from pipeswitch.common.consts import timer, Timers
 from pipeswitch.common.logger import logger
 
 
@@ -28,9 +29,11 @@ class GPUResourceAllocator:
             Dictionary of all GPUs in the system regardless of availability.
     """
 
+    @timer(Timers.PERF_COUNTER)
     def __init__(self) -> None:
         self.gpus = self._get_gpus()
 
+    @timer(Timers.PERF_COUNTER)
     def cuda_init(self) -> None:
         """Checks if available GPUs are visible by PyTorch.
 
@@ -49,6 +52,7 @@ class GPUResourceAllocator:
             logger.error("No GPUs available")
             raise KeyboardInterrupt
 
+    @timer(Timers.PERF_COUNTER)
     def get_free_gpus(self) -> List[int]:
         """Query available GPUs.
 
@@ -62,6 +66,7 @@ class GPUResourceAllocator:
 
         return free_gpus
 
+    @timer(Timers.PERF_COUNTER)
     def reserve_gpus(self, num_gpus: int = 0) -> List[int]:
         """Reserves set amount of GPUs.
 
@@ -98,6 +103,7 @@ class GPUResourceAllocator:
             self._check_gpu(gpu_id)
         return available_gpus
 
+    @timer(Timers.PERF_COUNTER)
     def warmup_gpus(self, gpus: List[int]) -> None:
         """Warmup GPUs by running a dummy PyTorch function."""
         for gpu_id in gpus:
@@ -106,6 +112,7 @@ class GPUResourceAllocator:
             torch.cuda.allocate_cache(gpu_id)  # type: ignore
             logger.debug(f"Allocated shared cache for GPU {gpu_id}")
 
+    @timer(Timers.PERF_COUNTER)
     def release_gpus(self) -> None:
         """Release all reserved GPUS."""
         if "CUDA_VISIBLE_DEVICES" not in os.environ:

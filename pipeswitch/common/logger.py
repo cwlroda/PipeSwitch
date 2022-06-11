@@ -1,20 +1,11 @@
 """Define logger and its format."""
 import logging
-from colorama import init, Fore, Style
+from colorama import Fore, Style
 import verboselogs
 
 
 class CustomFormatter(logging.Formatter):
-    """Logging colored formatter, adapted from
-    https://stackoverflow.com/a/56944256/3638629
-    """
-
-    grey = "\x1b[38;21m"
-    blue = "\x1b[38;5;39m"
-    yellow = "\x1b[38;5;226m"
-    red = "\x1b[38;5;196m"
-    bold_red = "\x1b[31;1m"
-    reset = "\x1b[0m"
+    """Logging colored formatter"""
 
     def __init__(self):
         super().__init__()
@@ -28,6 +19,12 @@ class CustomFormatter(logging.Formatter):
                 f"{Fore.WHITE + Style.DIM} [%(asctime)-15s"
                 f" {Fore.BLUE} %(levelname)s %(filename)s:%(lineno)d"
                 f" %(funcName)s] {Fore.MAGENTA} %(message)s{Style.RESET_ALL}"
+            ),
+            logging.VERBOSE: (
+                f"{Fore.WHITE + Style.DIM} [%(asctime)-15s"
+                f" {Fore.WHITE} %(levelname)s"
+                " %(filename)s:%(lineno)d %(funcName)s]"
+                f"{Style.RESET_ALL} %(message)s{Style.RESET_ALL}"
             ),
             logging.INFO: (
                 f"{Fore.WHITE + Style.DIM} [%(asctime)-15s"
@@ -67,14 +64,13 @@ class CustomFormatter(logging.Formatter):
         return formatter.format(record)
 
 
-init()
 verboselogs.install()
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.SPAM)
+logger.setLevel(logging.DEBUG)
 
 stdout_handler = logging.StreamHandler()
-stdout_handler.setLevel(logging.SPAM)
+stdout_handler.setLevel(logging.DEBUG)
 stdout_handler.setFormatter(CustomFormatter())
 
 logger.addHandler(stdout_handler)

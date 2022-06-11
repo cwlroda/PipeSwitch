@@ -20,6 +20,7 @@ from typing import Any, List, OrderedDict
 import torch
 import torch.multiprocessing as mp
 
+from pipeswitch.common.consts import timer, Timers
 from pipeswitch.common.logger import logger
 from pipeswitch.manager.client_manager import ClientManager
 from pipeswitch.manager.gpu_resource_allocator import GPUResourceAllocator
@@ -51,6 +52,7 @@ class Manager(Thread):
         scheduler (`Scheduler`): Thread that schedules tasks to runners.
     """
 
+    @timer(Timers.THREAD_TIMER)
     def __init__(self, mode: str = "gpu", num_gpus: int = -1) -> None:
         super().__init__()
         self.do_run: bool = True
@@ -59,12 +61,11 @@ class Manager(Thread):
         self.manager = mp.Manager()
         if self.mode == "gpu":
             self.gra: GPUResourceAllocator = GPUResourceAllocator()
+        self.runner_status = self.manager.dict()
         self.runner_status_queue: mp.Queue = mp.Queue()
-        # self.clients = self.manager.dict()
         self.requests_queue: mp.Queue = mp.Queue()
         self.results_queue: mp.Queue = mp.Queue()
         self.client_manager: ClientManager = ClientManager(
-            # clients=self.clients,
             requests_queue=self.requests_queue,
             results_queue=self.results_queue,
         )
@@ -83,13 +84,19 @@ class Manager(Thread):
             self._setup()
             logger.info("Manager setup done")
             while not self.client_manager.ready:
-                time.sleep(1)
+                time.sleep(0.001)
             logger.success(
                 "\n***********************************\n"
                 "Manager: Ready to receive requests!\n"
                 "***********************************"
             )
-            self._allocate_tasks()
+            logger.debug("Manager: Waiting for at least one runner to be ready")
+            while len(self.scheduler.runner_status) < 1:
+                time.sleep(0.001)
+            logger.success("Manager: Ready to execute tasks!")
+            while self.do_run:
+                task: OrderedDict[str, Any] = self.requests_queue.get()
+                self._allocate_tasks(task)
         except KeyboardInterrupt as _:
             logger.warning("Manager: Shutting down")
             if self.mode == "gpu":
@@ -97,6 +104,7 @@ class Manager(Thread):
             self.do_run = False
             logger.info("Manager: Successfully shut down")
 
+    @timer(Timers.PROCESS_TIMER)
     def _setup(self) -> None:
         """Run setup tasks in the manager."""
         logger.info("Manager: Start")
@@ -113,6 +121,7 @@ class Manager(Thread):
             self._load_models()
             self.scheduler: Scheduler = Scheduler(
                 num_runners=self.allocated_gpus,
+                runner_status=self.runner_status,
                 runner_status_queue=self.runner_status_queue,
             )
             self.scheduler.daemon = True
@@ -121,6 +130,7 @@ class Manager(Thread):
         except KeyboardInterrupt as kb_int:
             raise KeyboardInterrupt from kb_int
 
+    @timer(Timers.PERF_COUNTER)
     def _load_model_list(self, file_name: str) -> None:
         """Load a list of models to be used by the manager.
 
@@ -147,8 +157,8 @@ class Manager(Thread):
         for load_model in load_models:
             load_model.daemon = True
             load_model.start()
-            load_model.join()
 
+    @timer(Timers.THREAD_TIMER)
     def _load_model(self, model_name) -> None:
         # Import parameters
         logger.debug(f"Manager: loading model {model_name}")
@@ -171,6 +181,7 @@ class Manager(Thread):
         self.models[model_name] = model
         # return processed_batched_parameter_list
 
+    @timer(Timers.PERF_COUNTER)
     def _create_runners(self) -> None:
         """Create runner for each available GPU.
 
@@ -201,32 +212,24 @@ class Manager(Thread):
         except KeyboardInterrupt as kb_int:
             raise KeyboardInterrupt from kb_int
 
-    def _allocate_tasks(self) -> None:
-        logger.debug("Manager: Waiting for at least one runner to be ready")
-        while len(self.scheduler.runner_status) < 1:
-            time.sleep(1)
-        logger.success("Manager: Ready to execute tasks!")
-        while True:
-            try:
-                while not self.requests_queue.empty():
-                    task: OrderedDict[str, Any] = self.requests_queue.get()
-                    runner_id: int = -1
-                    while runner_id == -1:
-                        runner_id = self.scheduler.schedule()
-                    msg: OrderedDict[str, Any] = {
-                        "client_id": task["client_id"],
-                        "task_id": task["task_id"],
-                        "task_type": task["task_type"],
-                        "task_key": task["task_key"],
-                        "model_name": task["model_name"],
-                        # "model": self.models[task["model_name"]]
-                    }
-                    logger.info(
-                        "Assigning task"
-                        f" {task['model_name']} {task['task_type']} with id"
-                        f" {task['task_id']} from client {task['client_id']} to"
-                        f" runner {runner_id}"
-                    )
-                    self.runners[runner_id].task_queue.put(msg)
-            except KeyboardInterrupt as kb_err:
-                raise KeyboardInterrupt from kb_err
+    @timer(Timers.PROCESS_TIMER)
+    def _allocate_tasks(self, task: OrderedDict[str, Any]) -> None:
+        try:
+            runner_id = self.scheduler.schedule()
+            msg: OrderedDict[str, Any] = {
+                "client_id": task["client_id"],
+                "task_id": task["task_id"],
+                "task_type": task["task_type"],
+                "task_key": task["task_key"],
+                "model_name": task["model_name"],
+                # "model": self.models[task["model_name"]]
+            }
+            logger.info(
+                "Assigning task"
+                f" {task['model_name']} {task['task_type']} with id"
+                f" {task['task_id']} from client {task['client_id']} to"
+                f" runner {runner_id}"
+            )
+            self.runners[runner_id].task_queue.put(msg)
+        except KeyboardInterrupt as kb_err:
+            raise KeyboardInterrupt from kb_err

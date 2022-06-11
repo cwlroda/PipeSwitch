@@ -1,9 +1,9 @@
-from threading import Thread
+import time
 from abc import ABC, abstractmethod
 from typing import List, OrderedDict
 import multiprocessing as mp
 
-from pipeswitch.common.consts import State
+from pipeswitch.common.consts import State, timer, Timers
 from pipeswitch.common.logger import logger
 from pipeswitch.runner.status import RunnerStatus
 
@@ -18,50 +18,52 @@ class Policy(ABC):
 
 
 class RoundRobinPolicy(Policy):
+    @timer(Timers.PERF_COUNTER)
     def select_next(self, runners_list: List[int]) -> int:
-        if len(runners_list) == 0:
-            return -1
         return runners_list[0]
 
 
-class Scheduler(Thread):
+class Scheduler(mp.Process):
+    @timer(Timers.PERF_COUNTER)
     def __init__(
         self,
         num_runners: List[int],
+        runner_status,
         runner_status_queue: mp.Queue,
     ) -> None:
         super().__init__()
-        self.do_run: bool = True
+        self._do_run: bool = True
         self._policy: Policy = RoundRobinPolicy()
         self._runner_idx: List[int] = num_runners
-        self._runner_status: OrderedDict[int, State] = OrderedDict()
+        self._runner_status = runner_status
         self._runner_status_queue: mp.Queue = runner_status_queue
 
     def run(self) -> None:
-        while True:
+        while self._do_run:
             try:
-                if not self._runner_status_queue.empty():
-                    status: RunnerStatus = self._runner_status_queue.get()
-                    self._runner_status[status.device] = status.status
-                    logger.debug(
-                        "Scheduler status update: Runner"
-                        f" {status.device} {status.status}"
-                    )
+                status: RunnerStatus = self._runner_status_queue.get()
+                self._runner_status[status.device] = status.status
+                logger.debug(
+                    "Scheduler status update: Runner"
+                    f" {status.device} {status.status}"
+                )
             except KeyboardInterrupt as kb_err:
                 raise KeyboardInterrupt from kb_err
 
+    @timer(Timers.PROCESS_TIMER)
     def schedule(self) -> int:
         try:
-            free_runners: List[int] = self._get_free_runners()
+            free_runners = self._get_free_runners()
+            while len(free_runners) < 1:
+                time.sleep(0.25)
+                free_runners = self._get_free_runners()
+
             next_available_runner: int = self._policy.select_next(free_runners)
-            if next_available_runner != -1:
-                self.runner_status[next_available_runner] = State.RESERVED
-                logger.debug(
-                    "Scheduler: Next available runner is"
-                    f" {next_available_runner}"
-                )
-                return next_available_runner
-            return -1
+            self.runner_status[next_available_runner] = State.RESERVED
+            logger.debug(
+                f"Scheduler: Next available runner is {next_available_runner}"
+            )
+            return next_available_runner
         except KeyboardInterrupt as kb_err:
             raise KeyboardInterrupt from kb_err
 

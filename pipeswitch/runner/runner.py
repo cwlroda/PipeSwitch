@@ -7,7 +7,6 @@ Todo:
     * None
 """
 import time
-from threading import Thread
 from typing import Any, OrderedDict
 import multiprocessing as mp
 import torch
@@ -17,7 +16,13 @@ import json
 import urllib
 from PIL import Image
 
-from pipeswitch.common.consts import REDIS_HOST, REDIS_PORT, State
+from pipeswitch.common.consts import (
+    REDIS_HOST,
+    REDIS_PORT,
+    State,
+    timer,
+    Timers,
+)
 from pipeswitch.common.logger import logger
 from pipeswitch.runner.status import (  # pylint: disable=unused-import
     RunnerStatus,
@@ -54,6 +59,7 @@ class Runner(mp.Process):
             and sending results to the manager.
     """
 
+    @timer(Timers.PERF_COUNTER)
     def __init__(
         self,
         mode: str,
@@ -89,10 +95,6 @@ class Runner(mp.Process):
                 encoding="utf-8",
                 decode_responses=True,
             )
-            get_tasks: Thread = Thread(target=self._get_tasks)
-            get_tasks.daemon = True
-            get_tasks.start()
-
             if self.mode == "gpu":
                 # Create CUDA stream
                 self.cuda_stream_for_parameter = torch.cuda.Stream(  # type: ignore
@@ -101,9 +103,10 @@ class Runner(mp.Process):
                 logger.debug(f"Runner {self.device}: create stream")
             else:
                 self.cuda_stream_for_parameter = None
-
+            self._update_status(State.IDLE)
             while self.do_run:
-                time.sleep(100000)
+                self.task = self.task_queue.get()
+                self._manage_task()
         except RuntimeError as runtime_err:
             logger.error(runtime_err)
             tb = traceback.format_exc()
@@ -116,6 +119,7 @@ class Runner(mp.Process):
             tb = traceback.format_exc()
             self._cconn.send((kb_int, tb))
 
+    @timer(Timers.PERF_COUNTER)
     def _update_status(self, status: State) -> None:
         """Updates own runner status based on worker statuses"""
         try:
@@ -127,91 +131,90 @@ class Runner(mp.Process):
         except KeyboardInterrupt as kb_err:
             raise KeyboardInterrupt from kb_err
 
-    def _get_tasks(self) -> None:
-        self._update_status(State.IDLE)
-        while True:
-            try:
-                if not self.task_queue.empty():
-                    task = self.task_queue.get()
-                    logger.info(
-                        f"Runner {self.device}: received task"
-                        f" {task['model_name']} {task['task_type']} with id"
-                        f" {task['task_id']} from client {task['client_id']}"
-                    )
-                    self._update_status(State.BUSY)
-                    logger.debug(
-                        f"Runner {self.device}: CPU debug mode task execution"
-                    )
-                    # task_type = task["task_type"]
-                    task_key = task["task_key"]
-                    # model = task["model"]
+    @timer(Timers.PERF_COUNTER)
+    def _manage_task(self) -> None:
+        try:
+            logger.info(
+                f"Runner {self.device}: received task"
+                f" {self.task['model_name']} {self.task['task_type']} with id"
+                f" {self.task['task_id']} from client {self.task['client_id']}"
+            )
+            self._update_status(State.BUSY)
+            output = self._execute_task()
+            msg: OrderedDict[str, Any] = {
+                "worker_id": self.device,
+                "client_id": self.task["client_id"],
+                "task_type": self.task["task_type"],
+                "task_id": self.task["task_id"],
+                "model_name": self.task["model_name"],
+                "status": str(State.SUCCESS),
+                "output": output,
+            }
+            self.results_queue.put(msg)
+            # model_summary.reset_initialized(model_summary.model)
+            self._update_status(State.IDLE)
+        except RuntimeError as runtime_err:
+            logger.error(runtime_err)
+            logger.error(f"Runner {self.device}: task failed!")
+            msg: OrderedDict[str, Any] = {
+                "worker_id": self.device,
+                "client_id": self.task["client_id"],
+                "task_type": self.task["task_type"],
+                "task_id": self.task["task_id"],
+                "model_name": self.task["model_name"],
+                "status": str(State.FAILED),
+            }
+            self.results_queue.put(msg)
+            self._update_status(State.IDLE)
+        except KeyboardInterrupt as kb_err:
+            raise KeyboardInterrupt from kb_err
 
-                    data = self._load_data(task_key)
-                    logger.spam(data)
-                    # if task_type == "inference":
-                    #     model.eval()
-                    # elif task_type == "train":
-                    #     model.train()
-                    # else:
-                    #     logger.error(
-                    #         f"Runner {self.device}: unknown task type"
-                    #         f" {task_type}"
-                    #     )
+    @timer(Timers.PERF_COUNTER)
+    def _execute_task(self) -> Any:
+        """Executes a task."""
+        logger.debug(f"Runner {self.device}: CPU debug mode task execution")
+        # task_type = task["task_type"]
+        task_key = self.task["task_key"]
+        # model = task["model"]
 
-                    # TODO: run inference on a proper model
-                    # TODO: load data from redis store
-                    # output = self._run_inference()
-                    # start doing inference
-                    # frontend_scheduler will directly put
-                    # mod_list[0] in to self.results_queue_trans
+        data = self._load_data(task_key)
+        logger.spam(data)
+        # if task_type == "inference":
+        #     model.eval()
+        # elif task_type == "train":
+        #     model.train()
+        # else:
+        #     logger.error(
+        #         f"Runner {self.device}: unknown task type"
+        #         f" {task_type}"
+        #     )
 
-                    # if self.mode == "gpu":
-                    #     with torch.cuda.stream(
-                    #         model_summary.cuda_stream_for_computation
-                    #     ):
-                    #         logger.debug(
-                    #             f"Worker {self.device}-{self.worker_id}: Dummy"
-                    #             " inference execution"
-                    #         )
-                    #         output = "some random data"
-                    #         time.sleep(5)
-                    # output = model_summary.execute(task["data"])
-                    # logger.info(f"Get output: {output}")
-                    # del output
-                    # else:
-                    output = "some random data"
-                    time.sleep(5)
-                    msg: OrderedDict[str, Any] = {
-                        "worker_id": self.device,
-                        "client_id": task["client_id"],
-                        "task_type": task["task_type"],
-                        "task_id": task["task_id"],
-                        "model_name": task["model_name"],
-                        "status": str(State.SUCCESS),
-                        "output": output,
-                    }
-                    self.results_queue.put(msg)
-                    # model_summary.reset_initialized(model_summary.model)
-                    self._update_status(State.IDLE)
-            except RuntimeError as runtime_err:
-                logger.error(runtime_err)
-                logger.error(f"Runner {self.device}: task failed!")
-                msg: OrderedDict[str, Any] = {
-                    "worker_id": self.device,
-                    "client_id": task["client_id"],
-                    "task_type": task["task_type"],
-                    "task_id": task["task_id"],
-                    "model_name": task["model_name"],
-                    "status": str(State.FAILED),
-                }
-                self.results_queue.put(msg)
-                self._update_status(State.IDLE)
-            except TypeError as json_decode_err:
-                logger.debug(json_decode_err)
-                logger.debug(f"Runner {self.device}: invalid task message")
-            except KeyboardInterrupt as kb_err:
-                raise KeyboardInterrupt from kb_err
+        # TODO: run inference on a proper model
+        # TODO: load data from redis store
+        # output = self._run_inference()
+        # start doing inference
+        # frontend_scheduler will directly put
+        # mod_list[0] in to self.results_queue_trans
 
+        # if self.mode == "gpu":
+        #     with torch.cuda.stream(
+        #         model_summary.cuda_stream_for_computation
+        #     ):
+        #         logger.debug(
+        #             f"Worker {self.device}-{self.worker_id}: Dummy"
+        #             " inference execution"
+        #         )
+        #         output = "some random data"
+        #         time.sleep(5)
+        # output = model_summary.execute(task["data"])
+        # logger.info(f"Get output: {output}")
+        # del output
+        # else:
+        output = "some random data"
+        time.sleep(5)
+        return output
+
+    @timer(Timers.PERF_COUNTER)
     def _run_inference(self) -> None:
         try:
             data = torch.cuda.FloatTensor(self.data)
@@ -226,6 +229,7 @@ class Runner(mp.Process):
         except KeyboardInterrupt as kb_err:
             raise KeyboardInterrupt from kb_err
 
+    @timer(Timers.PERF_COUNTER)
     def _load_data(self, task_key: str) -> OrderedDict[str, Any]:
         """Loads data from redis store"""
         try:
@@ -237,10 +241,15 @@ class Runner(mp.Process):
                     f"Runner {self.device} data loader: reconnecting in 5s..."
                 )
                 time.sleep(5)
-            task_str = self._data_loader.get(task_key)
-            task = json.loads(task_str)
-            logger.debug(f"Runner {self.device}: retrieved task data {task}")
-            img_url = task["task"]["items"][0]["urls"]["-1"]
+            data_str = self._data_loader.get(task_key)
+            data = json.loads(data_str)
+            logger.debug(
+                f"Runner {self.device}: retrieved data for task"
+                f" {self.task['model_name']} {self.task['task_type']} with id"
+                f" {self.task['task_id']} from client {self.task['client_id']}"
+            )
+            logger.spam(data)
+            img_url = data["task"]["items"][0]["urls"]["-1"]
             urllib.request.urlretrieve(img_url, "img.png")
             img = Image.open("img.png")
             return img
