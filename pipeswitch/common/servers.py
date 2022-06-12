@@ -11,9 +11,9 @@ Todo:
 import time
 from threading import Thread
 from abc import ABC, abstractmethod
-from queue import Queue
+from torch.multiprocessing import Queue
 from typing import Any, List, OrderedDict, Tuple
-import redis
+from redis import Redis
 
 from pipeswitch.common.consts import timer, Timers
 from pipeswitch.common.logger import logger
@@ -46,17 +46,17 @@ class RedisServer(ABC, Thread):
         self,
         host: str,
         port: int,
+        sub_queue: "Queue[OrderedDict[str, Any]]" = Queue(),
         client_id="",
     ) -> None:
         super().__init__()
-        self.ready: bool = False
-        self.do_run: bool = True
+        self._ready: bool = False
+        self._do_run: bool = True
         self._host: str = host
         self._port: int = port
         self._client_id: str = client_id
-        self._pub_queue: "Queue[str]" = Queue()
-        self._sub_queue: "Queue[str]" = Queue()
-        self._redis = redis.Redis(
+        self._sub_queue: "Queue[OrderedDict[str, Any]]" = sub_queue
+        self._redis = Redis(
             host=self._host,
             port=self._port,
             encoding="utf-8",
@@ -67,10 +67,10 @@ class RedisServer(ABC, Thread):
     def run(self) -> None:
         try:
             if self._redis.ping():
-                self.ready = True
+                self._ready = True
             else:
                 logger.error(f"{self._server_name}: connection failed!")
-            while self.do_run:
+            while self._do_run:
                 msg: Tuple[str, OrderedDict[str, Any]] = self._redis.xread(
                     streams={self.sub_stream: "$"}, count=None, block=0
                 )
@@ -80,10 +80,9 @@ class RedisServer(ABC, Thread):
             return
 
     @timer(Timers.PERF_COUNTER)
-    def publish(self) -> None:
+    def publish(self, item: OrderedDict[str, Any]) -> None:
         if self.pub_stream == "":
             return
-        item: OrderedDict[str, Any] = self.pub_queue.get()
         logger.debug(
             f"{self._server_name}: publishing msg to stream {self.pub_stream}"
         )
@@ -94,13 +93,12 @@ class RedisServer(ABC, Thread):
     def _process_msg(self, msg: List[Any]) -> None:
         for msg_item in msg:
             entry_id, entry = msg_item[1][0]
-            self.sub_queue.put(entry)
+            self._sub_queue.put(entry)
             self._redis.xdel(self.sub_stream, entry_id)
 
     @property
-    @abstractmethod
-    def _server_name(self) -> str:
-        pass
+    def ready(self) -> bool:
+        return self._ready
 
     @property
     @abstractmethod
@@ -113,12 +111,9 @@ class RedisServer(ABC, Thread):
         pass
 
     @property
-    def sub_queue(self) -> "Queue[str]":
-        return self._sub_queue
-
-    @property
-    def pub_queue(self) -> "Queue[str]":
-        return self._pub_queue
+    @abstractmethod
+    def _server_name(self) -> str:
+        pass
 
 
 class ManagerClientConnectionServer(RedisServer):

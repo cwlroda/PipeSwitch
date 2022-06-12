@@ -9,12 +9,11 @@ Todo:
 import os
 import time
 from typing import Any, OrderedDict
-import multiprocessing as mp
+from torch.multiprocessing import Process, Queue
 import torch
-import traceback
-import redis
+from redis import Redis, exceptions
 import json
-import urllib
+from urllib import request
 from PIL import Image
 from pprint import pformat
 
@@ -29,7 +28,7 @@ from pipeswitch.common.logger import logger
 from pipeswitch.runner.status import RunnerStatus
 
 
-class Runner(mp.Process):
+class Runner(Process):
     """Runner thread that receives tasks from the manager
     and allocates them to the available workers.
     It collects results from the workers and sends them back to the manager.
@@ -64,22 +63,18 @@ class Runner(mp.Process):
         self,
         mode: str,
         device: int,
-        runner_status_queue: mp.Queue,
-        results_queue: mp.Queue,
+        runner_status_queue: "Queue[RunnerStatus]",
+        results_queue: "Queue[OrderedDict[str, Any]]",
     ) -> None:
         super().__init__()
-        self.do_run: bool = True
-        self.mode: str = mode
-        self.device: int = device
-        self.runner_status_queue: mp.Queue = runner_status_queue
-        self.task_queue: mp.Queue = mp.Queue()
-        self.results_queue: mp.Queue = results_queue
-        self.status: State = State.STARTUP
-        self.models_queue: mp.Queue = mp.Queue()
-        self.num_tasks_complete: int = 0
-        self.num_tasks_failed: int = 0
-        self._pconn, self._cconn = mp.Pipe()
-        self._exception = None
+        self._do_run: bool = True
+        self._mode: str = mode
+        self._device: int = device
+        self._runner_status_queue: "Queue[RunnerStatus]" = runner_status_queue
+        self._task_queue: "Queue[OrderedDict[str, Any]]" = Queue()
+        self._results_queue: "Queue[OrderedDict[str, Any]]" = results_queue
+        self._status: State = State.STARTUP
+        self._models_queue: Queue = Queue()
 
     def run(self) -> None:
         """Main runner function that sets up the runner and runs it.
@@ -87,30 +82,26 @@ class Runner(mp.Process):
         Raises:
             `TypeError`: If the message received is not a JSON string.
         """
-        logger.debug(f"Runner {self.device}: start")
+        logger.debug(f"Runner {self._device}: start")
         try:
-            self._data_loader = redis.Redis(
+            self._data_loader = Redis(
                 host=REDIS_HOST,
                 port=REDIS_PORT,
                 encoding="utf-8",
                 decode_responses=True,
             )
-            if self.mode == "gpu":
+            if self._mode == "gpu":
                 # Create CUDA stream
                 self.cuda_stream_for_parameter = torch.cuda.Stream(  # type: ignore
-                    self.device
+                    self._device
                 )
-                logger.debug(f"Runner {self.device}: create stream")
+                logger.debug(f"Runner {self._device}: create stream")
             else:
                 self.cuda_stream_for_parameter = None
             self._update_status(State.IDLE)
-            while self.do_run:
-                self.task = self.task_queue.get()
+            while self._do_run:
+                self.task = self._task_queue.get()
                 self._manage_task()
-        except RuntimeError as runtime_err:
-            logger.error(runtime_err)
-            tb = traceback.format_exc()
-            self._cconn.send((runtime_err, tb))
         except KeyboardInterrupt as _:
             return
 
@@ -118,11 +109,11 @@ class Runner(mp.Process):
     def _update_status(self, status: State) -> None:
         """Updates own runner status based on worker statuses"""
         try:
-            logger.debug(f"Updating runner {self.device} status")
-            self.status = status
-            logger.debug(f"Runner {self.device}: status {self.status}")
-            runner_status = RunnerStatus(device=self.device, status=status)
-            self.runner_status_queue.put(runner_status)
+            logger.debug(f"Updating runner {self._device} status")
+            self._status = status
+            logger.debug(f"Runner {self._device}: status {self._status}")
+            runner_status = RunnerStatus(device=self._device, status=status)
+            self._runner_status_queue.put(runner_status)
         except KeyboardInterrupt as kb_err:
             raise KeyboardInterrupt from kb_err
 
@@ -130,14 +121,14 @@ class Runner(mp.Process):
     def _manage_task(self) -> None:
         try:
             logger.info(
-                f"Runner {self.device}: received task"
+                f"Runner {self._device}: received task"
                 f" {self.task['model_name']} {self.task['task_type']} with id"
                 f" {self.task['task_id']} from client {self.task['client_id']}"
             )
             self._update_status(State.BUSY)
             output = self._execute_task()
             msg: OrderedDict[str, Any] = {
-                "worker_id": self.device,
+                "worker_id": self._device,
                 "client_id": self.task["client_id"],
                 "task_type": self.task["task_type"],
                 "task_id": self.task["task_id"],
@@ -145,21 +136,21 @@ class Runner(mp.Process):
                 "status": str(State.SUCCESS),
                 "output": output,
             }
-            self.results_queue.put(msg)
+            self._results_queue.put(msg)
             # model_summary.reset_initialized(model_summary.model)
             self._update_status(State.IDLE)
         except RuntimeError as runtime_err:
             logger.error(runtime_err)
-            logger.error(f"Runner {self.device}: task failed!")
+            logger.error(f"Runner {self._device}: task failed!")
             msg: OrderedDict[str, Any] = {
-                "worker_id": self.device,
+                "worker_id": self._device,
                 "client_id": self.task["client_id"],
                 "task_type": self.task["task_type"],
                 "task_id": self.task["task_id"],
                 "model_name": self.task["model_name"],
                 "status": str(State.FAILED),
             }
-            self.results_queue.put(msg)
+            self._results_queue.put(msg)
             self._update_status(State.IDLE)
         except KeyboardInterrupt as kb_err:
             raise KeyboardInterrupt from kb_err
@@ -167,7 +158,7 @@ class Runner(mp.Process):
     @timer(Timers.PERF_COUNTER)
     def _execute_task(self) -> Any:
         """Executes a task."""
-        logger.debug(f"Runner {self.device}: CPU debug mode task execution")
+        logger.debug(f"Runner {self._device}: CPU debug mode task execution")
         # task_type = task["task_type"]
         task_key = self.task["task_key"]
         # model = task["model"]
@@ -180,7 +171,7 @@ class Runner(mp.Process):
         #     model.train()
         # else:
         #     logger.error(
-        #         f"Runner {self.device}: unknown task type"
+        #         f"Runner {self._device}: unknown task type"
         #         f" {task_type}"
         #     )
 
@@ -189,14 +180,14 @@ class Runner(mp.Process):
         # output = self._run_inference()
         # start doing inference
         # frontend_scheduler will directly put
-        # mod_list[0] in to self.results_queue_trans
+        # mod_list[0] in to self._results_queue_trans
 
-        # if self.mode == "gpu":
+        # if self._mode == "gpu":
         #     with torch.cuda.stream(
         #         model_summary.cuda_stream_for_computation
         #     ):
         #         logger.debug(
-        #             f"Worker {self.device}-{self.worker_id}: Dummy"
+        #             f"Worker {self._device}-{self.worker_id}: Dummy"
         #             " inference execution"
         #         )
         #         output = "some random data"
@@ -214,10 +205,10 @@ class Runner(mp.Process):
         try:
             data = torch.cuda.FloatTensor(self.data)
             input_batch = data.view(-1, 3, 224, 224).cuda(
-                device=self.device, non_blocking=True
+                device=self._device, non_blocking=True
             )
             with torch.no_grad():
-                output = self.model(input_batch)
+                output = self._model(input_batch)
             return output.sum().item()
         except TypeError as type_err:
             logger.error(type_err)
@@ -230,16 +221,16 @@ class Runner(mp.Process):
         try:
             while not self._data_loader.ping():
                 logger.error(
-                    f"Runner {self.device} data loader: connection failed!"
+                    f"Runner {self._device} data loader: connection failed!"
                 )
                 logger.error(
-                    f"Runner {self.device} data loader: reconnecting in 5s..."
+                    f"Runner {self._device} data loader: reconnecting in 5s..."
                 )
                 time.sleep(5)
             data_str = self._data_loader.get(task_key)
             data = json.loads(data_str)
             logger.debug(
-                f"Runner {self.device}: retrieved data for task"
+                f"Runner {self._device}: retrieved data for task"
                 f" {self.task['model_name']} {self.task['task_type']} with id"
                 f" {self.task['task_id']} from client {self.task['client_id']}"
             )
@@ -248,23 +239,20 @@ class Runner(mp.Process):
             img_name = img_url.split("/")[-1]
             if not os.path.exists(img_name):
                 logger.debug(
-                    f"Runner {self.device}: Downloading image {img_name}..."
+                    f"Runner {self._device}: Downloading image {img_name}..."
                 )
-                urllib.request.urlretrieve(img_url, img_name)
+                request.urlretrieve(img_url, img_name)
             img = Image.open(img_name)
             return img
-        except redis.exceptions.ConnectionError as conn_err:
+        except exceptions.ConnectionError as conn_err:
             logger.error(conn_err)
-            raise redis.exceptions.ConnectionError from conn_err
-        except redis.exceptions.RedisError as redis_err:
+            raise exceptions.ConnectionError from conn_err
+        except exceptions.RedisError as redis_err:
             logger.error(redis_err)
-            raise redis.exceptions.RedisError from redis_err
+            raise exceptions.RedisError from redis_err
         except KeyboardInterrupt as kb_err:
             raise KeyboardInterrupt from kb_err
 
     @property
-    def exception(self):
-        """Returns (exception, traceback) if run raises one."""
-        if self._pconn.poll():
-            self._exception = self._pconn.recv()
-        return self._exception
+    def task_queue(self) -> Queue:
+        return self._task_queue

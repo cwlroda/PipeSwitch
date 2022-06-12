@@ -31,50 +31,19 @@ class GPUResourceAllocator:
 
     @timer(Timers.PERF_COUNTER)
     def __init__(self) -> None:
-        self.gpus = self._get_gpus()
-
-    @timer(Timers.PERF_COUNTER)
-    def cuda_init(self) -> None:
-        """Checks if available GPUs are visible by PyTorch.
-
-        Raises:
-            `AssertionError`: If CUDA is not available.
-
-            `AssertionError`: If the number of GPUs visible by PyTorch
-                is not equal to the total number of available GPUs.
-        """
-        os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
-        os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
-        if not torch.cuda.is_available():
-            logger.error("CUDA is not available")
-            raise KeyboardInterrupt
-        if len(self.gpus) < 1 or torch.cuda.device_count() < 1:
-            logger.error("No GPUs available")
-            raise KeyboardInterrupt
-
-    @timer(Timers.PERF_COUNTER)
-    def get_free_gpus(self) -> List[int]:
-        """Query available GPUs.
-
-        Returns:
-            List[int]: List of available GPU ids.
-        """
-        free_gpus: List[int] = []
-        for gpu_id, gpu in self.gpus.items():
-            if len(gpu["processes"]) == 0:
-                free_gpus.append(gpu_id)
-
-        return free_gpus
+        self._gpus = self._get_gpus()
+        self._cuda_init()
 
     @timer(Timers.PERF_COUNTER)
     def reserve_gpus(self, num_gpus: int = 0) -> List[int]:
         """Reserves set amount of GPUs.
 
         Args:
-            num_gpus (int, optional): total number of GPUs to reserve. Defaults to 0.
+            num_gpus (int, optional):
+                Total number of GPUs to reserve. Defaults to 0.
 
         Returns:
-            List[int]: list of IDs of reserved GPUs.
+            List[int]: List of IDs of reserved GPUs.
         """
         available_gpus: List[int] = []
         if "CUDA_VISIBLE_DEVICES" in os.environ:
@@ -84,7 +53,7 @@ class GPUResourceAllocator:
             )
             return available_gpus
 
-        free_gpus: List[int] = self.get_free_gpus()
+        free_gpus: List[int] = self._get_free_gpus()
         if num_gpus == 0:
             num_gpus = len(free_gpus)
         if num_gpus > 0 and num_gpus <= len(free_gpus):
@@ -125,6 +94,24 @@ class GPUResourceAllocator:
         )
         os.environ["CUDA_VISIBLE_DEVICES"] = ""
 
+    def _cuda_init(self) -> None:
+        """Checks if available GPUs are visible by PyTorch.
+
+        Raises:
+            `AssertionError`: If CUDA is not available.
+
+            `AssertionError`: If the number of GPUs visible by PyTorch
+                is not equal to the total number of available GPUs.
+        """
+        os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
+        os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+        if not torch.cuda.is_available():
+            logger.error("CUDA is not available")
+            raise KeyboardInterrupt
+        if len(self._gpus) < 1 or torch.cuda.device_count() < 1:
+            logger.error("No GPUs available")
+            raise KeyboardInterrupt
+
     def _get_gpus(self) -> OrderedDict[int, GPUStat]:
         """Uses gpustat to query all GPUs in the system.
 
@@ -139,6 +126,19 @@ class GPUResourceAllocator:
                 gpus[gpu["index"]] = gpu
 
         return gpus
+
+    @timer(Timers.PERF_COUNTER)
+    def _get_free_gpus(self) -> List[int]:
+        """Query available GPUs.
+
+        Returns:
+            List[int]: List of available GPU ids.
+        """
+        return [
+            gpu_id
+            for gpu_id, gpu in self._gpus.items()
+            if len(gpu["processes"]) == 0
+        ]
 
     def _check_gpu(self, gpu_id: int) -> None:
         """Checks if a GPU can be utilized by PyTorch.

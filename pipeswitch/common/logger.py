@@ -9,7 +9,7 @@ class CustomFormatter(logging.Formatter):
 
     def __init__(self):
         super().__init__()
-        self.formats = {
+        self._formats = {
             logging.SPAM: (
                 f"{Fore.WHITE + Style.DIM} [%(asctime)-15s"
                 "  %(levelname)s %(filename)s:%(lineno)d"
@@ -59,7 +59,7 @@ class CustomFormatter(logging.Formatter):
         }
 
     def format(self, record):
-        log_fmt = self.formats.get(record.levelno)
+        log_fmt = self._formats.get(record.levelno)
         formatter = logging.Formatter(log_fmt)
         return formatter.format(record)
 

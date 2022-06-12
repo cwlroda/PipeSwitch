@@ -18,7 +18,7 @@ import importlib
 from threading import Thread
 from typing import Any, List, OrderedDict
 import torch
-import torch.multiprocessing as mp
+from torch.multiprocessing import Manager, Process, Queue
 from pprint import pformat
 
 from pipeswitch.common.consts import timer, Timers
@@ -27,9 +27,12 @@ from pipeswitch.manager.client_manager import ClientManager
 from pipeswitch.manager.gpu_resource_allocator import GPUResourceAllocator
 from pipeswitch.manager.scheduler import Scheduler
 from pipeswitch.runner.runner import Runner
+from pipeswitch.runner.status import (  # pylint: disable=unused-import
+    RunnerStatus,
+)
 
 
-class Manager(Thread):
+class PipeSwitchManager(Thread):
     """Manager thread that acts as a middleman between clients and runners.
 
     It has two main functions:
@@ -56,24 +59,24 @@ class Manager(Thread):
     @timer(Timers.THREAD_TIMER)
     def __init__(self, mode: str = "gpu", num_gpus: int = -1) -> None:
         super().__init__()
-        self.do_run: bool = True
-        self.mode: str = mode
-        self.num_gpus = num_gpus
-        self.manager = mp.Manager()
-        if self.mode == "gpu":
-            self.gra: GPUResourceAllocator = GPUResourceAllocator()
-        self.runner_status = self.manager.dict()
-        self.runner_status_queue: mp.Queue = mp.Queue()
-        self.requests_queue: mp.Queue = mp.Queue()
-        self.results_queue: mp.Queue = mp.Queue()
-        self.client_manager: ClientManager = ClientManager(
-            requests_queue=self.requests_queue,
-            results_queue=self.results_queue,
+        self._do_run: bool = True
+        self._mode: str = mode
+        self._num_gpus: int = num_gpus
+        self._manager: Manager = Manager()
+        if self._mode == "gpu":
+            self._gra: GPUResourceAllocator = GPUResourceAllocator()
+        self._runner_status: OrderedDict[
+            int, RunnerStatus
+        ] = self._manager.dict()
+        self._runner_status_queue: "Queue[RunnerStatus]" = Queue()
+        self._requests_queue: "Queue[OrderedDict[str, Any]]" = Queue()
+        self._results_queue: "Queue[OrderedDict[str, Any]]" = Queue()
+        self._client_manager: ClientManager = ClientManager(
+            requests_queue=self._requests_queue,
+            results_queue=self._results_queue,
         )
-        self.model_list: List(str) = []
-
-        self.models: OrderedDict[str, Any] = OrderedDict()
-        self.runners: OrderedDict[int, Runner] = OrderedDict()
+        self._models: OrderedDict[str, Any] = OrderedDict()
+        self._runners: OrderedDict[int, Runner] = OrderedDict()
 
     def run(self) -> None:
         """Main manager function that sets up the manager and runs it.
@@ -84,7 +87,7 @@ class Manager(Thread):
         try:
             self._setup()
             logger.info("Manager setup done")
-            while not self.client_manager.ready:
+            while not self._client_manager.ready:
                 time.sleep(0.001)
             logger.success(
                 "\n***********************************\n"
@@ -93,34 +96,57 @@ class Manager(Thread):
             )
             logger.debug("Manager: Waiting for at least one runner to be ready")
             while len(self.scheduler.runner_status) < 1 or len(
-                self.models
-            ) != len(self.model_list):
+                self._models
+            ) != len(self._model_list):
                 time.sleep(0.001)
             logger.success("Manager: Ready to execute tasks!")
-            while self.do_run:
-                task: OrderedDict[str, Any] = self.requests_queue.get()
+            while self._do_run:
+                task: OrderedDict[str, Any] = self._requests_queue.get()
+                logger.info(
+                    "Manager: Received task"
+                    f" {task['model_name']} {task['task_type']} with id"
+                    f" {task['task_id']} from client {task['client_id']}"
+                )
+                logger.info(
+                    f"Manager: {self._requests_queue.qsize()} tasks in requests"
+                    " queue"
+                )
                 self._allocate_tasks(task)
         except KeyboardInterrupt as _:
             return
+
+    @timer(Timers.PERF_COUNTER)
+    def shutdown(self) -> None:
+        logger.warning("Manager: Shutting down")
+        self._client_manager.terminate()
+        logger.warning("Terminated client manager")
+        self.scheduler.terminate()
+        logger.warning("Terminated scheduler")
+        for runner in self._runners.values():
+            runner.terminate()
+        logger.warning("Terminated runners")
+        self.do_run = False
+        if self._mode == "gpu":
+            self._gra.release_gpus()
+        logger.info("Manager: Successfully shut down")
 
     @timer(Timers.PROCESS_TIMER)
     def _setup(self) -> None:
         """Run setup tasks in the manager."""
         logger.info("Manager: Start")
-        self.client_manager.daemon = True
-        self.client_manager.start()
-        if self.mode == "gpu":
-            self.gra.cuda_init()
-            self.allocated_gpus = self.gra.reserve_gpus(self.num_gpus)
+        self._client_manager.daemon = True
+        self._client_manager.start()
+        if self._mode == "gpu":
+            self.allocated_gpus = self._gra.reserve_gpus(self._num_gpus)
             logger.info(f"Allocated GPUs: {self.allocated_gpus}")
-            self.gra.warmup_gpus(gpus=self.allocated_gpus)
+            self._gra.warmup_gpus(gpus=self.allocated_gpus)
         else:
-            self.allocated_gpus = [*range(self.num_gpus)]
+            self.allocated_gpus = [*range(self._num_gpus)]
         self._load_models()
         self.scheduler: Scheduler = Scheduler(
             num_runners=self.allocated_gpus,
-            runner_status=self.runner_status,
-            runner_status_queue=self.runner_status_queue,
+            runner_status=self._runner_status,
+            runner_status_queue=self._runner_status_queue,
         )
         self.scheduler.daemon = True
         self.scheduler.start()
@@ -138,8 +164,9 @@ class Manager(Thread):
         """
         assert os.path.exists(file_name)
         with open(file=file_name, encoding="utf-8") as f:
-            for line in f.readlines():
-                self.model_list.append(line.strip())
+            self._model_list: List[str] = [
+                line.strip() for line in f.readlines()
+            ]
 
     def _load_models(self) -> None:
         self._load_model_list(file_name="model_list.txt")
@@ -148,7 +175,7 @@ class Manager(Thread):
                 target=self._load_model,
                 args=(model_name,),
             )
-            for model_name in self.model_list
+            for model_name in self._model_list
         ]
         for load_model in self.load_models:
             load_model.daemon = True
@@ -174,7 +201,7 @@ class Manager(Thread):
         #         processed_batched_parameter_list.append(
         #             (param.pin_memory(), mod_list)
         #         )
-        self.models[model_name] = model
+        self._models[model_name] = model
         # return processed_batched_parameter_list
 
     @timer(Timers.PERF_COUNTER)
@@ -186,20 +213,17 @@ class Manager(Thread):
                 number of workers to create per runner, default 2.
         """
         for runner_id in self.allocated_gpus:
-            if self.mode == "gpu":
+            if self._mode == "gpu":
                 torch.cuda.set_device(device=runner_id)
-            runner: mp.Process = Runner(
-                mode=self.mode,
+            runner: Process = Runner(
+                mode=self._mode,
                 device=runner_id,
-                runner_status_queue=self.runner_status_queue,
-                results_queue=self.results_queue,
+                runner_status_queue=self._runner_status_queue,
+                results_queue=self._results_queue,
             )
             runner.daemon = True
             runner.start()
-            if runner.exception is not None:
-                logger.error(f"Manager exception caught: {runner.exception[0]}")
-                raise KeyboardInterrupt from runner.exception[0]
-            self.runners[runner_id] = runner
+            self._runners[runner_id] = runner
             logger.info(f"Created runner in GPU {runner_id}")
             # break
 
@@ -212,7 +236,7 @@ class Manager(Thread):
             "task_type": task["task_type"],
             "task_key": task["task_key"],
             "model_name": task["model_name"],
-            # "model": self.models[task["model_name"]]
+            # "model": self._models[task["model_name"]]
         }
         logger.info(
             "Assigning task"
@@ -220,19 +244,4 @@ class Manager(Thread):
             f" {task['task_id']} from client {task['client_id']} to"
             f" runner {runner_id}"
         )
-        self.runners[runner_id].task_queue.put(msg)
-
-    @timer(Timers.PERF_COUNTER)
-    def shutdown(self) -> None:
-        logger.warning("Manager: Shutting down")
-        self.client_manager.terminate()
-        logger.warning("Terminated client manager")
-        self.scheduler.terminate()
-        logger.warning("Terminated scheduler")
-        for runner in self.runners.values():
-            runner.terminate()
-        logger.warning("Terminated runners")
-        self.do_run = False
-        if self.mode == "gpu":
-            self.gra.release_gpus()
-        logger.info("Manager: Successfully shut down")
+        self._runners[runner_id].task_queue.put(msg)

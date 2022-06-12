@@ -20,18 +20,22 @@ import sys
 import torch.multiprocessing as mp
 
 from pipeswitch.common.logger import logger
-from pipeswitch.manager.manager import Manager
-import traceback
+from pipeswitch.manager.manager import PipeSwitchManager
 
 
 def launch():
     try:
         logger.info(f"PID: {os.getpid()}")
         # os.system("redis-server redis.conf")
-        mp.set_start_method("forkserver")
+        try:
+            mp.set_start_method("forkserver")
+        except RuntimeError:
+            pass
         mode = sys.argv[1]
         num_gpus = int(sys.argv[2]) if len(sys.argv) > 2 else 1
-        manager: Manager = Manager(mode=mode, num_gpus=num_gpus)
+        manager: PipeSwitchManager = PipeSwitchManager(
+            mode=mode, num_gpus=num_gpus
+        )
         manager.daemon = True
         manager.start()
         manager.join()

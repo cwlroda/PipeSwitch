@@ -1,7 +1,10 @@
 import time
 from abc import ABC, abstractmethod
 from typing import List, OrderedDict
-import multiprocessing as mp
+from torch.multiprocessing import (
+    Process,
+    Queue,
+)  # pylint: disable=unused-import
 
 from pipeswitch.common.consts import State, timer, Timers
 from pipeswitch.common.logger import logger
@@ -23,20 +26,20 @@ class RoundRobinPolicy(Policy):
         return runners_list[0]
 
 
-class Scheduler(mp.Process):
+class Scheduler(Process):
     @timer(Timers.PERF_COUNTER)
     def __init__(
         self,
         num_runners: List[int],
-        runner_status,
-        runner_status_queue: mp.Queue,
+        runner_status: OrderedDict[int, RunnerStatus],
+        runner_status_queue: "Queue[RunnerStatus]",
     ) -> None:
         super().__init__()
         self._do_run: bool = True
         self._policy: Policy = RoundRobinPolicy()
         self._runner_idx: List[int] = num_runners
-        self._runner_status = runner_status
-        self._runner_status_queue: mp.Queue = runner_status_queue
+        self._runner_status: OrderedDict[int, RunnerStatus] = runner_status
+        self._runner_status_queue: "Queue[RunnerStatus]" = runner_status_queue
 
     def run(self) -> None:
         try:
@@ -64,6 +67,13 @@ class Scheduler(mp.Process):
         )
         return next_available_runner
 
+    def _get_free_runners(self) -> List[int]:
+        return [
+            runner_id
+            for runner_id, status in self.runner_status.items()
+            if status == State.IDLE
+        ]
+
     @property
     def runner_idx(self) -> List[int]:
         return self._runner_idx
@@ -71,10 +81,3 @@ class Scheduler(mp.Process):
     @property
     def runner_status(self) -> OrderedDict[int, State]:
         return self._runner_status
-
-    def _get_free_runners(self) -> List[int]:
-        free_runners: List[int] = []
-        for runner_id, status in self.runner_status.items():
-            if status == State.IDLE:
-                free_runners.append(runner_id)
-        return free_runners
