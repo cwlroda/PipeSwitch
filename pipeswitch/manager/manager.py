@@ -12,7 +12,7 @@ Todo:
     * None
 """
 
-import time
+from time import sleep
 import os
 import importlib
 from threading import Thread
@@ -71,10 +71,13 @@ class PipeSwitchManager(Thread):
         self._runner_status_queue: "Queue[RunnerStatus]" = Queue()
         self._requests_queue: "Queue[OrderedDict[str, Any]]" = Queue()
         self._results_queue: "Queue[OrderedDict[str, Any]]" = Queue()
+        self._client_blacklist: OrderedDict[str, int] = self._manager.dict()
         self._client_manager: ClientManager = ClientManager(
             requests_queue=self._requests_queue,
             results_queue=self._results_queue,
+            client_blacklist=self._client_blacklist,
         )
+        self._model_classes: OrderedDict[str, object] = self._manager.dict()
         self._models: OrderedDict[str, Any] = OrderedDict()
         self._runners: OrderedDict[int, Runner] = OrderedDict()
 
@@ -88,7 +91,7 @@ class PipeSwitchManager(Thread):
             self._setup()
             logger.info("Manager setup done")
             while not self._client_manager.ready:
-                time.sleep(0.001)
+                sleep(0.001)
             logger.success(
                 "\n***********************************\n"
                 "Manager: Ready to receive requests!\n"
@@ -98,20 +101,27 @@ class PipeSwitchManager(Thread):
             while len(self.scheduler.runner_status) < 1 or len(
                 self._models
             ) != len(self._model_list):
-                time.sleep(0.001)
+                sleep(0.001)
             logger.success("Manager: Ready to execute tasks!")
             while self._do_run:
                 task: OrderedDict[str, Any] = self._requests_queue.get()
-                logger.info(
-                    "Manager: Received task"
-                    f" {task['model_name']} {task['task_type']} with id"
-                    f" {task['task_id']} from client {task['client_id']}"
-                )
-                logger.info(
-                    f"Manager: {self._requests_queue.qsize()} tasks in requests"
-                    " queue"
-                )
-                self._allocate_tasks(task)
+                if task["client_id"] in self._client_blacklist.keys():
+                    logger.warning(
+                        "Manager: Ignoring stale task"
+                        f" {task['model_name']} {task['task_type']} with id"
+                        f" {task['task_id']} from client {task['client_id']}"
+                    )
+                else:
+                    logger.info(
+                        "Manager: Received task"
+                        f" {task['model_name']} {task['task_type']} with id"
+                        f" {task['task_id']} from client {task['client_id']}"
+                    )
+                    logger.info(
+                        f"Manager: {self._requests_queue.qsize()} tasks in"
+                        " requests queue"
+                    )
+                    self._allocate_tasks(task)
         except KeyboardInterrupt as _:
             return
 
@@ -170,39 +180,47 @@ class PipeSwitchManager(Thread):
 
     def _load_models(self) -> None:
         self._load_model_list(file_name="model_list.txt")
+        for model_name in self._model_list:
+            model_module = importlib.import_module(
+                "pipeswitch.task." + model_name
+            )
+            model_class: object = model_module.MODEL_CLASS()
+            self._model_classes[model_name] = model_class
         self.load_models = [
             Thread(
                 target=self._load_model,
-                args=(model_name,),
+                args=(
+                    model_name,
+                    model_class,
+                ),
             )
-            for model_name in self._model_list
+            for model_name, model_class in self._model_classes.items()
         ]
         for load_model in self.load_models:
             load_model.daemon = True
             load_model.start()
 
     @timer(Timers.THREAD_TIMER)
-    def _load_model(self, model_name) -> None:
+    def _load_model(self, model_name, model_class) -> None:
         # Import parameters
         logger.debug(f"Manager: loading model {model_name}")
-        model_module = importlib.import_module("pipeswitch.task." + model_name)
-        # logger.debug(f"Manager: importing {model_name} parameters")
-        model = model_module.import_model()
-        logger.spam(f"\n{pformat(object=model, indent=1, width=1)}")
-        logger.debug(f"Manager: loaded model {model_name}")
+        logger.debug(f"Manager: importing {model_name} parameters")
+        batched_parameter_list: List[Any] = model_class.import_parameters()
 
         # Preprocess batches
-        # logger.debug(f"Manager: preprocessing {model_name} parameters")
-        # processed_batched_parameter_list: List[Any] = []
-        # for param, mod_list in batched_parameter_list:
-        #     if param is None:
-        #         processed_batched_parameter_list.append((None, mod_list))
-        #     else:
-        #         processed_batched_parameter_list.append(
-        #             (param.pin_memory(), mod_list)
-        #         )
-        self._models[model_name] = model
-        # return processed_batched_parameter_list
+        logger.debug(f"Manager: preprocessing {model_name} parameters")
+
+        self._models[model_name] = [
+            (None, mod_list)
+            if param is None
+            else (param.pin_memory(), mod_list)
+            for param, mod_list in batched_parameter_list
+        ]
+        logger.spam(
+            f"\n{pformat(object=self._models[model_name], indent=1, width=1)}"
+        )
+
+        logger.debug(f"Manager: loaded model {model_name}")
 
     @timer(Timers.PERF_COUNTER)
     def _create_runners(self) -> None:
@@ -219,6 +237,8 @@ class PipeSwitchManager(Thread):
                 mode=self._mode,
                 device=runner_id,
                 runner_status_queue=self._runner_status_queue,
+                model_list=self._model_list,
+                model_classes=self._model_classes,
                 results_queue=self._results_queue,
             )
             runner.daemon = True
@@ -230,6 +250,7 @@ class PipeSwitchManager(Thread):
     @timer(Timers.PROCESS_TIMER)
     def _allocate_tasks(self, task: OrderedDict[str, Any]) -> None:
         runner_id = self.scheduler.schedule()
+        runner = self._runners[runner_id]
         msg: OrderedDict[str, Any] = {
             "client_id": task["client_id"],
             "task_id": task["task_id"],
@@ -244,4 +265,33 @@ class PipeSwitchManager(Thread):
             f" {task['task_id']} from client {task['client_id']} to"
             f" runner {runner_id}"
         )
-        self._runners[runner_id].task_queue.put(msg)
+        runner.task_in.send(msg)
+
+        if self._mode == "gpu":
+            # Create CUDA stream
+            cuda_stream_for_parameter = torch.cuda.Stream(runner_id)
+            logger.debug(f"Manager: create CUDA stream for runner {runner_id}")
+
+            # Allocate cache to streams
+            with torch.cuda.stream(cuda_stream_for_parameter):
+                torch.cuda.insert_shared_cache_for_parameter(runner_id)
+            logger.debug(
+                "Manager: insert shared cache for parameters for runner"
+                f" {runner_id}"
+            )
+
+            # Transfer parameters to GPU
+            batched_parameter_list = self._models[
+                f"{task['model_name']}_{task['task_type']}"
+            ]
+            self._transfer_parameter(
+                batched_parameter_list,
+                cuda_stream_for_parameter,
+                runner.model_in,
+            )
+            logger.debug(f"Manager: transfer parameters to runner {runner_id}")
+
+            # Clear status
+            with torch.cuda.stream(cuda_stream_for_parameter):
+                torch.cuda.clear_shared_cache(runner_id)
+            logger.debug(f"Manager: clear shared cache for runner {runner_id}")

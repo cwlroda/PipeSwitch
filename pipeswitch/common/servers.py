@@ -8,12 +8,12 @@ Todo:
     * None
 """
 
-import time
 from threading import Thread
 from abc import ABC, abstractmethod
 from torch.multiprocessing import Queue
 from typing import Any, List, OrderedDict, Tuple
 from redis import Redis
+from pprint import pformat
 
 from pipeswitch.common.consts import timer, Timers
 from pipeswitch.common.logger import logger
@@ -63,6 +63,7 @@ class RedisServer(ABC, Thread):
             decode_responses=True,
             retry_on_timeout=True,
         )
+        self.msg_id: str = ""
 
     def run(self) -> None:
         try:
@@ -72,7 +73,11 @@ class RedisServer(ABC, Thread):
                 logger.error(f"{self._server_name}: connection failed!")
             while self._do_run:
                 msg: Tuple[str, OrderedDict[str, Any]] = self._redis.xread(
-                    streams={self.sub_stream: "$"}, count=None, block=0
+                    streams={
+                        self.sub_stream: self.msg_id if self.msg_id else "$"
+                    },
+                    count=None,
+                    block=0,
                 )
                 if msg is not None:
                     self._process_msg(msg)
@@ -80,21 +85,25 @@ class RedisServer(ABC, Thread):
             return
 
     @timer(Timers.PERF_COUNTER)
-    def publish(self, item: OrderedDict[str, Any]) -> None:
+    def publish(self, msg: OrderedDict[str, Any]) -> None:
         if self.pub_stream == "":
             return
-        logger.debug(
-            f"{self._server_name}: publishing msg to stream {self.pub_stream}"
+        logger.spam(
+            f"{self._server_name}: publishing msg to stream"
+            f" {self.pub_stream}\n{pformat(object=msg, indent=1, width=1)}"
         )
-        self._redis.xadd(self.pub_stream, item)
-        time.sleep(0.001)
+        self._redis.xadd(self.pub_stream, msg)
 
     @timer(Timers.PERF_COUNTER)
     def _process_msg(self, msg: List[Any]) -> None:
+        logger.spam(
+            f"Message received:\n{pformat(object=msg, indent=1, width=1)}"
+        )
         for msg_item in msg:
             entry_id, entry = msg_item[1][0]
             self._sub_queue.put(entry)
-            self._redis.xdel(self.sub_stream, entry_id)
+            self.msg_id = entry_id
+            # self._redis.xdel(self.sub_stream, entry_id)
 
     @property
     def ready(self) -> bool:

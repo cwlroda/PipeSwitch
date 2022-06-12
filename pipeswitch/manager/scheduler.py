@@ -1,10 +1,10 @@
-import time
+from time import sleep
 from abc import ABC, abstractmethod
 from typing import List, OrderedDict
-from torch.multiprocessing import (
+from torch.multiprocessing import (  # pylint: disable=unused-import
     Process,
     Queue,
-)  # pylint: disable=unused-import
+)
 
 from pipeswitch.common.consts import State, timer, Timers
 from pipeswitch.common.logger import logger
@@ -57,7 +57,7 @@ class Scheduler(Process):
     def schedule(self) -> int:
         free_runners = self._get_free_runners()
         while len(free_runners) < 1:
-            time.sleep(0.25)
+            sleep(0.25)
             free_runners = self._get_free_runners()
 
         next_available_runner: int = self._policy.select_next(free_runners)

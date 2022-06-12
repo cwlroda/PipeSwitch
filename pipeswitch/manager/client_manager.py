@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 from threading import Thread
-from typing import Any, OrderedDict
+from typing import Any, OrderedDict, Set
 from torch.multiprocessing import Process, Queue
 
 from pipeswitch.common.consts import (
@@ -22,7 +22,12 @@ from pipeswitch.common.servers import (
 
 class ClientManager(Process):
     @timer(Timers.PERF_COUNTER)
-    def __init__(self, requests_queue: Queue, results_queue: Queue) -> None:
+    def __init__(
+        self,
+        requests_queue: Queue,
+        results_queue: Queue,
+        client_blacklist: OrderedDict[str, int],
+    ) -> None:
         super().__init__()
         self._do_run: bool = True
         self._max_clients: int = 10
@@ -32,14 +37,15 @@ class ClientManager(Process):
         self._results_queue: "Queue[OrderedDict[str, Any]]" = results_queue
         self._tasks_complete: int = 0
         self._tasks_failed: int = 0
+        self._client_blacklist: OrderedDict[str] = client_blacklist
+        self.conn_server: RedisServer = ManagerClientConnectionServer(
+            host=REDIS_HOST,
+            port=REDIS_PORT,
+            sub_queue=self._conn_queue,
+        )
 
     def run(self) -> None:
         try:
-            self.conn_server: RedisServer = ManagerClientConnectionServer(
-                host=REDIS_HOST,
-                port=REDIS_PORT,
-                sub_queue=self._conn_queue,
-            )
             self.conn_server.daemon = True
             self.conn_server.start()
             check_results = Thread(target=self._check_results)
@@ -89,6 +95,8 @@ class ClientManager(Process):
     @timer(Timers.PERF_COUNTER)
     def _connect(self, conn: OrderedDict[str, Any]) -> None:
         if len(self._clients) < self._max_clients:
+            if conn["client_id"] in self._client_blacklist.keys():
+                self._client_blacklist.pop(conn["client_id"])
             req_server: RedisServer = ManagerClientRequestsServer(
                 client_id=conn["client_id"],
                 host=REDIS_HOST,
@@ -119,6 +127,8 @@ class ClientManager(Process):
 
     @timer(Timers.PERF_COUNTER)
     def _disconnect(self, conn: OrderedDict[str, Any]) -> None:
+        self._client_blacklist[conn["client_id"]] = 1
+        logger.info(f"ClientManager: Blacklisted client {conn['client_id']}")
         self._clients.pop(conn["client_id"])
         resp = {
             "client_id": conn["client_id"],
@@ -135,14 +145,21 @@ class ClientManager(Process):
 
     @timer(Timers.PERF_COUNTER)
     def _check_result(self, result: OrderedDict[str, Any]) -> None:
-        if result["status"] == str(State.SUCCESS):
-            self._tasks_complete += 1
+        if result["client_id"] not in self._client_blacklist.keys():
+            if result["status"] == str(State.SUCCESS):
+                self._tasks_complete += 1
+            else:
+                self._tasks_failed += 1
+            logger.success(f"{self._tasks_complete} task(s) complete!")
+            if self._tasks_failed > 0:
+                logger.error(f"{self._tasks_failed} task(s) failed!")
+            self._clients[result["client_id"]].publish(result)
         else:
-            self._tasks_failed += 1
-        logger.success(f"{self._tasks_complete} task(s) complete!")
-        if self._tasks_failed > 0:
-            logger.error(f"{self._tasks_failed} task(s) failed!")
-        self._clients[result["client_id"]].publish(result)
+            logger.warning(
+                "ClientManager: Discarding results of stale task"
+                f" {result['model_name']} {result['task_type']} with id"
+                f" {result['task_id']} from client {result['client_id']}"
+            )
 
     def ready(self) -> bool:
         return self.conn_server.ready

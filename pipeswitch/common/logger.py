@@ -11,47 +11,47 @@ class CustomFormatter(logging.Formatter):
         super().__init__()
         self._formats = {
             logging.SPAM: (
-                f"{Fore.WHITE + Style.DIM} [%(asctime)-15s"
+                f"{Fore.WHITE + Style.DIM} [%(asctime)s.%(msecs)06f"
                 "  %(levelname)s %(filename)s:%(lineno)d"
                 f" %(funcName)s]  %(message)s{Style.RESET_ALL}"
             ),
             logging.DEBUG: (
-                f"{Fore.WHITE + Style.DIM} [%(asctime)-15s"
+                f"{Fore.WHITE + Style.DIM} [%(asctime)s.%(msecs)06f"
                 f" {Fore.BLUE} %(levelname)s %(filename)s:%(lineno)d"
                 f" %(funcName)s] {Fore.MAGENTA} %(message)s{Style.RESET_ALL}"
             ),
             logging.VERBOSE: (
-                f"{Fore.WHITE + Style.DIM} [%(asctime)-15s"
+                f"{Fore.WHITE + Style.DIM} [%(asctime)s.%(msecs)06f"
                 f" {Fore.WHITE} %(levelname)s"
                 " %(filename)s:%(lineno)d %(funcName)s]"
                 f"{Style.RESET_ALL} %(message)s{Style.RESET_ALL}"
             ),
             logging.INFO: (
-                f"{Fore.WHITE + Style.DIM} [%(asctime)-15s"
+                f"{Fore.WHITE + Style.DIM} [%(asctime)s.%(msecs)06f"
                 f" {Style.RESET_ALL}{Fore.CYAN} %(levelname)s"
                 " %(filename)s:%(lineno)d %(funcName)s]"
                 f" {Fore.MAGENTA + Style.BRIGHT} %(message)s{Style.RESET_ALL}"
             ),
             logging.WARNING: (
-                f"{Fore.WHITE + Style.DIM} [%(asctime)-15s"
+                f"{Fore.WHITE + Style.DIM} [%(asctime)s.%(msecs)06f"
                 f" {Style.RESET_ALL}{Fore.YELLOW} %(levelname)s"
                 " %(filename)s:%(lineno)d %(funcName)s]"
                 f" {Fore.MAGENTA + Style.BRIGHT} %(message)s{Style.RESET_ALL}"
             ),
             logging.SUCCESS: (
-                f"{Fore.WHITE + Style.DIM} [%(asctime)-15s"
+                f"{Fore.WHITE + Style.DIM} [%(asctime)s.%(msecs)06f"
                 f" {Style.RESET_ALL}{Fore.GREEN} %(levelname)s"
                 " %(filename)s:%(lineno)d %(funcName)s]"
                 f" {Fore.GREEN + Style.BRIGHT} %(message)s{Style.RESET_ALL}"
             ),
             logging.ERROR: (
-                f"{Fore.WHITE + Style.DIM} [%(asctime)-15s"
+                f"{Fore.WHITE + Style.DIM} [%(asctime)s.%(msecs)06f"
                 f" {Style.RESET_ALL}{Fore.RED} %(levelname)s"
                 " %(filename)s:%(lineno)d %(funcName)s]"
                 f" {Style.BRIGHT} %(message)s{Style.RESET_ALL}"
             ),
             logging.CRITICAL: (
-                f"{Fore.WHITE + Style.DIM} [%(asctime)-15s"
+                f"{Fore.WHITE + Style.DIM} [%(asctime)s.%(msecs)06f"
                 f"{Style.RESET_ALL}{Fore.RED} %(levelname)s"
                 " %(filename)s:%(lineno)d %(funcName)s]"
                 f" {Style.BRIGHT} %(message)s{Style.RESET_ALL}"
@@ -60,7 +60,8 @@ class CustomFormatter(logging.Formatter):
 
     def format(self, record):
         log_fmt = self._formats.get(record.levelno)
-        formatter = logging.Formatter(log_fmt)
+        date_fmt = "%Y-%m-%d %H:%M:%S"
+        formatter = logging.Formatter(fmt=log_fmt, datefmt=date_fmt)
         return formatter.format(record)
 
 

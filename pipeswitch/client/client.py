@@ -51,6 +51,9 @@ class Client:
             send_requests = Thread(target=self._send_requests)
             send_requests.daemon = True
             send_requests.start()
+            timeout = Thread(target=self._timeout)
+            timeout.daemon = True
+            timeout.start()
             self._receive_results()
             self._disconnect()
         except KeyboardInterrupt as _:
@@ -157,40 +160,57 @@ class Client:
         )
         self._pending_tasks[msg["task_id"]] = msg
         self.req_server.publish(msg)
-        time.sleep(0.001)  # Necessary to avoid missing messages
+        time.sleep(1)  # Necessary to avoid missing messages
 
     @timer(Timers.PERF_COUNTER)
     def _receive_results(self) -> None:
-        count = 0
-        while count != self._num_it:
+        task_count = 0
+        while task_count != self._num_it:
             result: OrderedDict[str, Any] = self._results_queue.get()
-            if result["status"] == str(State.SUCCESS):
-                logger.success(
-                    f"Client {self._client_id}: received task"
-                    f" {result['model_name']} {result['task_type']} with"
-                    f" id {result['task_id']} result {result['output']}"
+            if result["task_id"] in self._pending_tasks.keys():
+                if result["status"] == str(State.SUCCESS):
+                    logger.success(
+                        f"Client {self._client_id}: received task"
+                        f" {result['model_name']} {result['task_type']} with"
+                        f" id {result['task_id']} result {result['output']}"
+                    )
+                    task_count += 1
+                    logger.info(
+                        f"Client {self._client_id}: completed tasks"
+                        f" {task_count}/{self._num_it}"
+                    )
+                    self._pending_tasks.pop(result["task_id"])
+                    # TODO: store results in the client
+                else:
+                    # TODO: handle failed task
+                    # TODO: push failed task back to the task queue and resend
+                    logger.error(
+                        f"Client {self._client_id}: task"
+                        f" {result['model_name']} {result['task_type']} with"
+                        f" id {result['task_id']} failed"
+                    )
+                    logger.debug(
+                        f"Client {self._client_id}: retrying task"
+                        f" {result['model_name']} {result['task_type']} with"
+                        f" id {result['task_id']}"
+                    )
+                    self._task_queue.put(self._pending_tasks[result["task_id"]])
+
+    def _timeout(self) -> None:
+        start_time = time.perf_counter()
+        timeout = 30  # 10000 * self._num_it
+        while True:
+            if (time.perf_counter() - start_time) > timeout:
+                logger.warning(
+                    f"Client {self._client_id}: requests timed out after"
+                    f" {timeout}s"
                 )
-                count += 1
-                logger.info(
-                    f"Client {self._client_id}: completed tasks"
-                    f" {count}/{self._num_it}"
+                logger.warning(
+                    f"Client {self._client_id}: resending pending tasks..."
                 )
-                self._pending_tasks.pop(result["task_id"])
-                # TODO: store results in the client
-            else:
-                # TODO: handle failed task
-                # TODO: push failed task back to the task queue and resend
-                logger.error(
-                    f"Client {self._client_id}: task"
-                    f" {result['model_name']} {result['task_type']} with"
-                    f" id {result['task_id']} failed"
-                )
-                logger.debug(
-                    f"Client {self._client_id}: retrying task"
-                    f" {result['model_name']} {result['task_type']} with"
-                    f" id {result['task_id']}"
-                )
-                self._task_queue.put(self._pending_tasks[result["task_id"]])
+                for _, task in self._pending_tasks.items():
+                    self._task_queue.put(task)
+                start_time = time.perf_counter()
 
     def _shutdown(self) -> None:
         logger.warning(f"Client {self._client_id}: shutting down")

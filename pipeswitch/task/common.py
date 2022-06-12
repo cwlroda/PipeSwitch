@@ -51,11 +51,8 @@ def group_to_batch(group):
             for child in mod.children():
                 travel_layer(child)
 
-    for mod in group:
-        travel_layer(mod)
-
     def pad(t, blockSize):
-        length = t.nelement()
+        length = t.numel()
         size = length * t.element_size()
         padded_size = blockSize * ((size + blockSize - 1) // blockSize)
         padded_length = padded_size // t.element_size()
@@ -63,22 +60,25 @@ def group_to_batch(group):
         t_padded[:length] = t
         return t_padded
 
-    tensor_list = []
-    for mod in mod_list:
-        for p in mod.parameters():
-            tensor_list.append(pad(p.view(-1), kMinBlockSize))
-    for mod in mod_list:
-        for _, buf in mod._buffers.items():
-            if buf is not None and buf.dtype is torch.float32:
-                tensor_list.append(pad(buf.view(-1), kMinBlockSize))
-
-    if len(tensor_list) > 0:
+    for mod in group:
+        travel_layer(mod)
+    param_tensor_list = [
+        pad(p.view(-1), kMinBlockSize)
+        for mod in mod_list
+        for p in mod.parameters()
+    ]
+    buffer_tensor_list = [
+        pad(buf.view(-1), kMinBlockSize)
+        for mod in mod_list
+        for _, buf in mod._buffers.items()
+        if buf is not None and buf.dtype is torch.float32
+    ]
+    if (len(param_tensor_list) + len(buffer_tensor_list)) > 0:
+        tensor_list = param_tensor_list + buffer_tensor_list
         batched_tensor = torch.cat(tensor_list)
     else:
         batched_tensor = None
-
     modname_list = [
         mod.fullname if hasattr(mod, "fullname") else None for mod in mod_list
     ]
-
     return batched_tensor, modname_list
