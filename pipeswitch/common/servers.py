@@ -47,7 +47,7 @@ class RedisServer(ABC, Thread):
         host: str,
         port: int,
         sub_queue: "Queue[OrderedDict[str, Any]]" = Queue(),
-        client_id="",
+        client_id: str = "",
     ) -> None:
         super().__init__()
         self._ready: bool = False
@@ -63,18 +63,24 @@ class RedisServer(ABC, Thread):
             decode_responses=True,
             retry_on_timeout=True,
         )
-        self.msg_id: str = ""
+        self._msg_id: str = ""
+        self._msg_count: int = 0
+        self._msg_limit: int = 10
 
     def run(self) -> None:
         try:
             if self._redis.ping():
                 self._ready = True
+                logger.info(
+                    f"{self._server_name}: Listening to stream"
+                    f" {self.sub_stream}"
+                )
             else:
                 logger.error(f"{self._server_name}: connection failed!")
             while self._do_run:
                 msg: Tuple[str, OrderedDict[str, Any]] = self._redis.xread(
                     streams={
-                        self.sub_stream: self.msg_id if self.msg_id else "$"
+                        self.sub_stream: self._msg_id if self._msg_id else "$"
                     },
                     count=None,
                     block=0,
@@ -89,21 +95,43 @@ class RedisServer(ABC, Thread):
         if self.pub_stream == "":
             return
         logger.spam(
-            f"{self._server_name}: publishing msg to stream"
+            f"{self._server_name}: Publishing msg to stream"
             f" {self.pub_stream}\n{pformat(object=msg, indent=1, width=1)}"
         )
         self._redis.xadd(self.pub_stream, msg)
 
     @timer(Timers.PERF_COUNTER)
+    def delete_streams(self) -> None:
+        logger.debug(f"{self._server_name}: Deleting stream: {self.pub_stream}")
+        self._redis.delete(self.pub_stream)
+        logger.debug(f"{self._server_name}: Deleting stream: {self.sub_stream}")
+        self._redis.delete(self.sub_stream)
+
+    @timer(Timers.PERF_COUNTER)
     def _process_msg(self, msg: List[Any]) -> None:
         logger.spam(
-            f"Message received:\n{pformat(object=msg, indent=1, width=1)}"
+            f"{self._server_name}: Message"
+            f" received:\n{pformat(object=msg, indent=1, width=1)}"
         )
         for msg_item in msg:
             entry_id, entry = msg_item[1][0]
             self._sub_queue.put(entry)
-            self.msg_id = entry_id
-            # self._redis.xdel(self.sub_stream, entry_id)
+            self._msg_id = entry_id
+        self._msg_count += 1
+        if self._msg_count > self._msg_limit:
+            logger.debug(
+                f"{self._server_name}: Clearing old messages from stream"
+                f" {self.sub_stream}"
+            )
+            self._redis.xtrim(name=self.sub_stream, minid=self._msg_id)
+            self._msg_count = 0
+
+    @property
+    def _server_name(self) -> str:
+        if self._client_id != "":
+            return f"{self.__class__.__name__}-{self._client_id}"
+        else:
+            return self.__class__.__name__
 
     @property
     def ready(self) -> bool:
@@ -119,21 +147,12 @@ class RedisServer(ABC, Thread):
     def sub_stream(self) -> str:
         pass
 
-    @property
-    @abstractmethod
-    def _server_name(self) -> str:
-        pass
-
 
 class ManagerClientConnectionServer(RedisServer):
     """Server in the manager that:
     - Receives connection requests from clients.
     - Sends handshake back to clients to confirm connection.
     """
-
-    @property
-    def _server_name(self) -> str:
-        return "ManagerClientConnectionServer"
 
     @property
     def pub_stream(self) -> str:
@@ -149,13 +168,6 @@ class ManagerClientRequestsServer(RedisServer):
     - Receives inference requests from a specific client.
     - Sends inference results to the specific client.
     """
-
-    @property
-    def _server_name(self) -> str:
-        if self._client_id != "":
-            return f"ManagerClientRequestsServer-{self._client_id}"
-        else:
-            return "ManagerClientRequestsServer"
 
     @property
     def pub_stream(self) -> str:
@@ -179,13 +191,6 @@ class ClientConnectionServer(RedisServer):
     """
 
     @property
-    def _server_name(self) -> str:
-        if self._client_id != "":
-            return f"ClientConnectionServer{self._client_id}"
-        else:
-            return "ClientConnectionServer"
-
-    @property
     def pub_stream(self) -> str:
         return "CONNECTIONS"
 
@@ -199,13 +204,6 @@ class ClientRequestsServer(RedisServer):
     - Sends inference requests to the manager.
     - Receives inference results from the manager.
     """
-
-    @property
-    def _server_name(self) -> str:
-        if self._client_id != "":
-            return f"ClientRequestsServer-{self._client_id}"
-        else:
-            return "ClientRequestsServer"
 
     @property
     def pub_stream(self) -> str:

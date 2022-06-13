@@ -17,7 +17,7 @@ from pipeswitch.common.consts import timer, Timers
 from pipeswitch.common.logger import logger
 
 
-class GPUResourceAllocator:
+class GPUResourceAllocator(object):
     """GPU Resource Allocator class.
 
     It has two main functions:
@@ -31,7 +31,8 @@ class GPUResourceAllocator:
 
     @timer(Timers.PERF_COUNTER)
     def __init__(self) -> None:
-        self._gpus = self._get_gpus()
+        self._name: str = self.__class__.__name__
+        self._gpus: OrderedDict[int, GPUStat] = self._get_gpus()
         self._cuda_init()
 
     @timer(Timers.PERF_COUNTER)
@@ -47,7 +48,7 @@ class GPUResourceAllocator:
         """
         available_gpus: List[int] = []
         if "CUDA_VISIBLE_DEVICES" in os.environ:
-            logger.warning("CUDA_VISIBLE_DEVICES is already set")
+            logger.warning(f"{self._name}: CUDA_VISIBLE_DEVICES is already set")
             available_gpus = list(
                 map(int, os.environ["CUDA_VISIBLE_DEVICES"].split(","))
             )
@@ -58,8 +59,8 @@ class GPUResourceAllocator:
             num_gpus = len(free_gpus)
         if num_gpus > 0 and num_gpus <= len(free_gpus):
             logger.error(
-                f"Unable to acquire {num_gpus} GPUs, there are only"
-                f" {len(free_gpus)} available."
+                f"{self._name}: Unable to acquire {num_gpus} GPUs, there are"
+                f" only {len(free_gpus)} available."
             )
             raise KeyboardInterrupt
 
@@ -67,7 +68,10 @@ class GPUResourceAllocator:
         gpu_str: str = ",".join([str(i) for i in available_gpus])
         os.environ["CUDA_VISIBLE_DEVICES"] = gpu_str
 
-        logger.debug(f"Acquiring GPUs: {os.environ['CUDA_VISIBLE_DEVICES']}")
+        logger.debug(
+            f"{self._name}: Acquiring GPUs:"
+            f" {os.environ['CUDA_VISIBLE_DEVICES']}"
+        )
         for gpu_id in available_gpus:
             self._check_gpu(gpu_id)
         return available_gpus
@@ -79,7 +83,9 @@ class GPUResourceAllocator:
             torch.cuda.set_device(gpu_id)
             torch.randn(1024, device=f"cuda:{gpu_id}")
             torch.cuda.allocate_cache(gpu_id)  # type: ignore
-            logger.debug(f"Allocated shared cache for GPU {gpu_id}")
+            logger.debug(
+                f"{self._name}: Allocated shared cache for GPU {gpu_id}"
+            )
 
     @timer(Timers.PERF_COUNTER)
     def release_gpus(self) -> None:
@@ -90,7 +96,8 @@ class GPUResourceAllocator:
         ):
             return
         logger.warning(
-            f"Releasing all GPUs: {os.environ['CUDA_VISIBLE_DEVICES']}"
+            f"{self._name}: Releasing all GPUs:"
+            f" {os.environ['CUDA_VISIBLE_DEVICES']}"
         )
         os.environ["CUDA_VISIBLE_DEVICES"] = ""
 
@@ -106,10 +113,10 @@ class GPUResourceAllocator:
         os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
         os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
         if not torch.cuda.is_available():
-            logger.error("CUDA is not available")
+            logger.error(f"{self._name}: CUDA is not available")
             raise KeyboardInterrupt
         if len(self._gpus) < 1 or torch.cuda.device_count() < 1:
-            logger.error("No GPUs available")
+            logger.error(f"{self._name}: No GPUs available")
             raise KeyboardInterrupt
 
     def _get_gpus(self) -> OrderedDict[int, GPUStat]:
@@ -150,4 +157,6 @@ class GPUResourceAllocator:
         device: torch.device = torch.device(f"cuda:{gpu_id}")
         x_train: torch.Tensor = torch.FloatTensor([0.0, 1.0, 2.0]).to(device)
         if not x_train.is_cuda:
-            logger.error(f"GPU {gpu_id} cannot be utilised by PyTorch")
+            logger.error(
+                f"{self._name}: GPU {gpu_id} cannot be utilised by PyTorch"
+            )

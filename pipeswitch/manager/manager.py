@@ -16,20 +16,22 @@ from time import sleep
 import os
 import importlib
 from threading import Thread
-from typing import Any, List, OrderedDict
+from typing import (  # pylint: disable=unused-import
+    Any,
+    List,
+    OrderedDict,
+    Tuple,
+)
 import torch
 from torch.multiprocessing import Manager, Process, Queue
 from pprint import pformat
 
-from pipeswitch.common.consts import timer, Timers
+from pipeswitch.common.consts import State, timer, Timers
 from pipeswitch.common.logger import logger
 from pipeswitch.manager.client_manager import ClientManager
 from pipeswitch.manager.gpu_resource_allocator import GPUResourceAllocator
 from pipeswitch.manager.scheduler import Scheduler
 from pipeswitch.runner.runner import Runner
-from pipeswitch.runner.status import (  # pylint: disable=unused-import
-    RunnerStatus,
-)
 
 
 class PipeSwitchManager(Thread):
@@ -59,16 +61,15 @@ class PipeSwitchManager(Thread):
     @timer(Timers.THREAD_TIMER)
     def __init__(self, mode: str = "gpu", num_gpus: int = -1) -> None:
         super().__init__()
+        self._name: str = self.__class__.__name__
         self._do_run: bool = True
         self._mode: str = mode
         self._num_gpus: int = num_gpus
         self._manager: Manager = Manager()
         if self._mode == "gpu":
             self._gra: GPUResourceAllocator = GPUResourceAllocator()
-        self._runner_status: OrderedDict[
-            int, RunnerStatus
-        ] = self._manager.dict()
-        self._runner_status_queue: "Queue[RunnerStatus]" = Queue()
+        self._runner_status: OrderedDict[int, State] = self._manager.dict()
+        self._runner_status_queue: "Queue[Tuple[int, State]]" = Queue()
         self._requests_queue: "Queue[OrderedDict[str, Any]]" = Queue()
         self._results_queue: "Queue[OrderedDict[str, Any]]" = Queue()
         self._client_blacklist: OrderedDict[str, int] = self._manager.dict()
@@ -89,37 +90,39 @@ class PipeSwitchManager(Thread):
         """
         try:
             self._setup()
-            logger.info("Manager setup done")
+            logger.info(f"{self._name} setup done")
             while not self._client_manager.ready:
                 sleep(0.001)
             logger.success(
-                "\n***********************************\n"
-                "Manager: Ready to receive requests!\n"
-                "***********************************"
+                "\n*********************************************\n"
+                f"{self._name}: Ready to receive requests!\n"
+                "*********************************************"
             )
-            logger.debug("Manager: Waiting for at least one runner to be ready")
+            logger.debug(
+                f"{self._name}: Waiting for at least one runner to be ready"
+            )
             while len(self.scheduler.runner_status) < 1 or len(
                 self._models
             ) != len(self._model_list):
                 sleep(0.001)
-            logger.success("Manager: Ready to execute tasks!")
+            logger.success(f"{self._name}: Ready to execute tasks!")
             while self._do_run:
                 task: OrderedDict[str, Any] = self._requests_queue.get()
+                logger.info(
+                    f"{self._name}: {self._requests_queue.qsize() + 1} task(s)"
+                    " in requests queue"
+                )
                 if task["client_id"] in self._client_blacklist.keys():
                     logger.warning(
-                        "Manager: Ignoring stale task"
+                        f"{self._name}: Ignoring stale task"
                         f" {task['model_name']} {task['task_type']} with id"
                         f" {task['task_id']} from client {task['client_id']}"
                     )
                 else:
                     logger.info(
-                        "Manager: Received task"
+                        f"{self._name}: Received task"
                         f" {task['model_name']} {task['task_type']} with id"
                         f" {task['task_id']} from client {task['client_id']}"
-                    )
-                    logger.info(
-                        f"Manager: {self._requests_queue.qsize()} tasks in"
-                        " requests queue"
                     )
                     self._allocate_tasks(task)
         except KeyboardInterrupt as _:
@@ -127,28 +130,28 @@ class PipeSwitchManager(Thread):
 
     @timer(Timers.PERF_COUNTER)
     def shutdown(self) -> None:
-        logger.warning("Manager: Shutting down")
+        logger.warning(f"{self._name}: Shutting down")
         self._client_manager.terminate()
-        logger.warning("Terminated client manager")
+        logger.warning(f"{self._name}: Terminated client manager")
         self.scheduler.terminate()
-        logger.warning("Terminated scheduler")
+        logger.warning(f"{self._name}: Terminated scheduler")
         for runner in self._runners.values():
             runner.terminate()
-        logger.warning("Terminated runners")
+        logger.warning(f"{self._name}: Terminated runners")
         self.do_run = False
         if self._mode == "gpu":
             self._gra.release_gpus()
-        logger.info("Manager: Successfully shut down")
+        logger.info(f"{self._name}: Successfully shut down")
 
     @timer(Timers.PROCESS_TIMER)
     def _setup(self) -> None:
         """Run setup tasks in the manager."""
-        logger.info("Manager: Start")
+        logger.info(f"{self._name}: Start")
         self._client_manager.daemon = True
         self._client_manager.start()
         if self._mode == "gpu":
             self.allocated_gpus = self._gra.reserve_gpus(self._num_gpus)
-            logger.info(f"Allocated GPUs: {self.allocated_gpus}")
+            logger.info(f"{self._name}: Allocated GPUs {self.allocated_gpus}")
             self._gra.warmup_gpus(gpus=self.allocated_gpus)
         else:
             self.allocated_gpus = [*range(self._num_gpus)]
@@ -172,7 +175,10 @@ class PipeSwitchManager(Thread):
         Raises:
             `AssertionError`: If the file does not exist.
         """
-        assert os.path.exists(file_name)
+        if not os.path.exists(file_name):
+            logger.error(f"{self._name}: Model list file {file_name} not found")
+            raise KeyboardInterrupt
+
         with open(file=file_name, encoding="utf-8") as f:
             self._model_list: List[str] = [
                 line.strip() for line in f.readlines()
@@ -203,12 +209,12 @@ class PipeSwitchManager(Thread):
     @timer(Timers.THREAD_TIMER)
     def _load_model(self, model_name, model_class) -> None:
         # Import parameters
-        logger.debug(f"Manager: loading model {model_name}")
-        logger.debug(f"Manager: importing {model_name} parameters")
+        logger.debug(f"{self._name}: Loading model {model_name}")
+        logger.debug(f"{self._name}: Importing {model_name} parameters")
         batched_parameter_list: List[Any] = model_class.import_parameters()
 
         # Preprocess batches
-        logger.debug(f"Manager: preprocessing {model_name} parameters")
+        logger.debug(f"{self._name}: Preprocessing {model_name} parameters")
 
         self._models[model_name] = [
             (None, mod_list)
@@ -220,7 +226,7 @@ class PipeSwitchManager(Thread):
             f"\n{pformat(object=self._models[model_name], indent=1, width=1)}"
         )
 
-        logger.debug(f"Manager: loaded model {model_name}")
+        logger.debug(f"{self._name}: Loaded model {model_name}")
 
     @timer(Timers.PERF_COUNTER)
     def _create_runners(self) -> None:
@@ -244,7 +250,7 @@ class PipeSwitchManager(Thread):
             runner.daemon = True
             runner.start()
             self._runners[runner_id] = runner
-            logger.info(f"Created runner in GPU {runner_id}")
+            logger.info(f"{self._name}: Created runner in GPU {runner_id}")
             # break
 
     @timer(Timers.PROCESS_TIMER)
@@ -260,7 +266,7 @@ class PipeSwitchManager(Thread):
             # "model": self._models[task["model_name"]]
         }
         logger.info(
-            "Assigning task"
+            f"{self._name}: Assigning task"
             f" {task['model_name']} {task['task_type']} with id"
             f" {task['task_id']} from client {task['client_id']} to"
             f" runner {runner_id}"
@@ -270,13 +276,15 @@ class PipeSwitchManager(Thread):
         if self._mode == "gpu":
             # Create CUDA stream
             cuda_stream_for_parameter = torch.cuda.Stream(runner_id)
-            logger.debug(f"Manager: create CUDA stream for runner {runner_id}")
+            logger.debug(
+                f"{self._name}: create CUDA stream for runner {runner_id}"
+            )
 
             # Allocate cache to streams
             with torch.cuda.stream(cuda_stream_for_parameter):
                 torch.cuda.insert_shared_cache_for_parameter(runner_id)
             logger.debug(
-                "Manager: insert shared cache for parameters for runner"
+                f"{self._name}: insert shared cache for parameters for runner"
                 f" {runner_id}"
             )
 
@@ -289,9 +297,13 @@ class PipeSwitchManager(Thread):
                 cuda_stream_for_parameter,
                 runner.model_in,
             )
-            logger.debug(f"Manager: transfer parameters to runner {runner_id}")
+            logger.debug(
+                f"{self._name}: transfer parameters to runner {runner_id}"
+            )
 
             # Clear status
             with torch.cuda.stream(cuda_stream_for_parameter):
                 torch.cuda.clear_shared_cache(runner_id)
-            logger.debug(f"Manager: clear shared cache for runner {runner_id}")
+            logger.debug(
+                f"{self._name}: clear shared cache for runner {runner_id}"
+            )

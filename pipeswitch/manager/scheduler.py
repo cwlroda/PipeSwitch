@@ -1,6 +1,6 @@
 from time import sleep
 from abc import ABC, abstractmethod
-from typing import List, OrderedDict
+from typing import List, OrderedDict, Tuple  # pylint: disable=unused-import
 from torch.multiprocessing import (  # pylint: disable=unused-import
     Process,
     Queue,
@@ -8,7 +8,6 @@ from torch.multiprocessing import (  # pylint: disable=unused-import
 
 from pipeswitch.common.consts import State, timer, Timers
 from pipeswitch.common.logger import logger
-from pipeswitch.runner.status import RunnerStatus
 
 
 class Policy(ABC):
@@ -31,25 +30,25 @@ class Scheduler(Process):
     def __init__(
         self,
         num_runners: List[int],
-        runner_status: OrderedDict[int, RunnerStatus],
-        runner_status_queue: "Queue[RunnerStatus]",
+        runner_status: OrderedDict[int, State],
+        runner_status_queue: "Queue[Tuple[int, State]]",
     ) -> None:
         super().__init__()
+        self._name: str = self.__class__.__name__
         self._do_run: bool = True
         self._policy: Policy = RoundRobinPolicy()
         self._runner_idx: List[int] = num_runners
-        self._runner_status: OrderedDict[int, RunnerStatus] = runner_status
-        self._runner_status_queue: "Queue[RunnerStatus]" = runner_status_queue
+        self._runner_status: OrderedDict[int, State] = runner_status
+        self._runner_status_queue: "Queue[Tuple[int, State]]" = (
+            runner_status_queue
+        )
 
     def run(self) -> None:
         try:
             while self._do_run:
-                status: RunnerStatus = self._runner_status_queue.get()
-                self._runner_status[status.device] = status.status
-                logger.debug(
-                    "Scheduler status update: Runner"
-                    f" {status.device} {status.status}"
-                )
+                runner_id, status = self._runner_status_queue.get()
+                logger.debug(f"{self._name}: Runner {runner_id} {status}")
+                self._runner_status[runner_id] = status
         except KeyboardInterrupt as _:
             return
 
@@ -63,7 +62,7 @@ class Scheduler(Process):
         next_available_runner: int = self._policy.select_next(free_runners)
         self.runner_status[next_available_runner] = State.RESERVED
         logger.debug(
-            f"Scheduler: Next available runner is {next_available_runner}"
+            f"{self._name}: Next available runner is {next_available_runner}"
         )
         return next_available_runner
 

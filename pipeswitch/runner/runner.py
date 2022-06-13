@@ -8,7 +8,12 @@ Todo:
 """
 import os
 from time import sleep
-from typing import Any, List, OrderedDict
+from typing import (  # pylint: disable=unused-import
+    Any,
+    List,
+    OrderedDict,
+    Tuple,
+)
 from torch.multiprocessing import (  # pylint: disable=unused-import
     Pipe,
     Process,
@@ -30,7 +35,6 @@ from pipeswitch.common.consts import (
     Timers,
 )
 from pipeswitch.common.logger import logger
-from pipeswitch.runner.status import RunnerStatus
 from pipeswitch.runner.runner_common import ModelSummary
 
 
@@ -69,17 +73,20 @@ class Runner(Process):
         self,
         mode: str,
         device: int,
-        runner_status_queue: "Queue[RunnerStatus]",
+        runner_status_queue: "Queue[Tuple[int, State]]",
         model_list: List[str],
         model_classes: OrderedDict[str, object],
         results_queue: "Queue[OrderedDict[str, Any]]",
     ) -> None:
         super().__init__()
+        self._name = self.__class__.__name__
         self._do_run: bool = True
         self._mode: str = mode
         self._device: int = device
         self._status: State = State.STARTUP
-        self._runner_status_queue: "Queue[RunnerStatus]" = runner_status_queue
+        self._runner_status_queue: "Queue[Tuple[int, State]]" = (
+            runner_status_queue
+        )
         self._model_in, self._model_out = Pipe()
         self._task_in, self._task_out = Pipe()
         self._results_queue: "Queue[OrderedDict[str, Any]]" = results_queue
@@ -93,7 +100,7 @@ class Runner(Process):
         Raises:
             `TypeError`: If the message received is not a JSON string.
         """
-        logger.debug(f"Runner {self._device}: start")
+        logger.debug(f"{self._name} {self._device}: start")
         try:
             self._data_loader = Redis(
                 host=REDIS_HOST,
@@ -104,7 +111,7 @@ class Runner(Process):
             if self._mode == "gpu":
                 torch.cuda.set_device(device=self._device)
                 torch.cuda.recv_cache(device=self._device)
-                logger.debug(f"Runner {self._device}: share GPU memory")
+                logger.debug(f"{self._name} {self._device}: share GPU memory")
                 load_jobs = []
                 for model_name, model_class in self._model_classes.items():
                     model_summary: ModelSummary = ModelSummary(
@@ -121,7 +128,7 @@ class Runner(Process):
                     load_jobs.append(load_model)
                     self._models[model_name] = model_summary
 
-            logger.debug(f"Runner {self._device}: import models")
+            logger.debug(f"{self._name} {self._device}: import models")
             self._update_status(State.IDLE)
             while self._do_run:
                 task: OrderedDict[str, Any] = self._task_out.recv()
@@ -133,11 +140,13 @@ class Runner(Process):
     def _update_status(self, status: State) -> None:
         """Updates own runner status based on worker statuses"""
         try:
-            logger.debug(f"Updating runner {self._device} status")
+
             self._status = status
-            logger.debug(f"Runner {self._device}: status {self._status}")
-            runner_status = RunnerStatus(device=self._device, status=status)
-            self._runner_status_queue.put(runner_status)
+            logger.debug(
+                f"{self._name} {self._device}: Updating status to"
+                f" {self._status}"
+            )
+            self._runner_status_queue.put((self._device, self._status))
         except KeyboardInterrupt as kb_err:
             raise KeyboardInterrupt from kb_err
 
@@ -145,7 +154,7 @@ class Runner(Process):
     def _manage_task(self, task: OrderedDict[str, Any]) -> None:
         try:
             logger.info(
-                f"Runner {self._device}: received task"
+                f"{self._name} {self._device}: received task"
                 f" {task['model_name']} {task['task_type']} with id"
                 f" {task['task_id']} from client {task['client_id']}"
             )
@@ -158,17 +167,16 @@ class Runner(Process):
                 model_summary = None
             output = self._execute_task(task, model_summary)
             msg: OrderedDict[str, Any] = {
-                "worker_id": self._device,
                 "client_id": task["client_id"],
                 "task_type": task["task_type"],
                 "task_id": task["task_id"],
                 "model_name": task["model_name"],
-                "status": str(State.SUCCESS),
+                "status": State.SUCCESS,
                 "output": output,
             }
             self._results_queue.put(msg)
             logger.debug(
-                f"Runner {self._device}: task"
+                f"{self._name} {self._device}: task"
                 f" {task['task_id']} {task['task_type']} with id"
                 f" {task['task_id']} complete"
             )
@@ -177,14 +185,13 @@ class Runner(Process):
             self._update_status(State.IDLE)
         except RuntimeError as runtime_err:
             logger.error(runtime_err)
-            logger.error(f"Runner {self._device}: task failed!")
+            logger.error(f"{self._name} {self._device}: task failed!")
             msg: OrderedDict[str, Any] = {
-                "worker_id": self._device,
                 "client_id": task["client_id"],
                 "task_type": task["task_type"],
                 "task_id": task["task_id"],
                 "model_name": task["model_name"],
-                "status": str(State.FAILED),
+                "status": State.FAILED,
             }
             self._results_queue.put(msg)
             self._update_status(State.IDLE)
@@ -199,20 +206,20 @@ class Runner(Process):
         # TODO: run inference on a proper model
         data = self._load_data(task)
         logger.spam(
-            "Runner"
-            f" {self._device} data:\n{pformat(object=data, indent=1, width=1)}"
+            f"{self._name} {self._device} data:"
+            f" \n{pformat(object=data, indent=1, width=1)}"
         )
 
         if self._mode == "gpu":
             with torch.cuda.stream(model_summary.cuda_stream_for_computation):
                 output = model_summary.execute(data)
                 logger.spam(
-                    f"Runner {self._device} output:"
+                    f"{self._name} {self._device} output:"
                     f" \n{pformat(object=output, indent=1, width=1)}"
                 )
         else:
             logger.debug(
-                f"Runner {self._device}: CPU debug mode task execution"
+                f"{self._name} {self._device}: CPU debug mode task execution"
             )
             output = "some random data"
             sleep(5)
@@ -242,16 +249,18 @@ class Runner(Process):
         try:
             while not self._data_loader.ping():
                 logger.error(
-                    f"Runner {self._device} data loader: connection failed!"
+                    f"{self._name} {self._device} data loader: connection"
+                    " failed!"
                 )
                 logger.error(
-                    f"Runner {self._device} data loader: reconnecting in 5s..."
+                    f"{self._name} {self._device} data loader: reconnecting in"
+                    " 5s..."
                 )
                 sleep(5)
             data_str = self._data_loader.get(task["task_key"])
             data = json.loads(data_str)
             logger.debug(
-                f"Runner {self._device}: retrieved data for task"
+                f"{self._name} {self._device}: retrieved data for task"
                 f" {task['model_name']} {task['task_type']} with id"
                 f" {task['task_id']} from client {task['client_id']}"
             )
@@ -260,7 +269,8 @@ class Runner(Process):
             img_name = img_url.split("/")[-1]
             if not os.path.exists(img_name):
                 logger.debug(
-                    f"Runner {self._device}: Downloading image {img_name}..."
+                    f"{self._name} {self._device}: Downloading image"
+                    f" {img_name}..."
                 )
                 request.urlretrieve(img_url, img_name)
             img = Image.open(img_name)

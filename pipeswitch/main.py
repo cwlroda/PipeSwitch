@@ -28,7 +28,7 @@ def launch():
         logger.info(f"PID: {os.getpid()}")
         # os.system("redis-server redis.conf")
         try:
-            mp.set_start_method("forkserver")
+            mp.set_start_method("spawn")
         except RuntimeError:
             pass
         mode = sys.argv[1]
