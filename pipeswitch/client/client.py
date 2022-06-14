@@ -1,5 +1,6 @@
 import sys
 import time
+from argparse import ArgumentParser
 from uuid import uuid4
 from queue import Queue
 from typing import Any, OrderedDict
@@ -20,6 +21,30 @@ from pipeswitch.common.servers import (
     RedisServer,
 )
 from pipeswitch.profiling.timer import timer
+
+
+def get_parser() -> ArgumentParser:
+    parser = ArgumentParser(description="FsDet demo for builtin models")
+
+    parser.add_argument(
+        "--model_name",
+        type=str,
+        default="resnet152",
+        help="Name of model for processing requests. Default is 'resnet152'.",
+    )
+    parser.add_argument(
+        "--batch_size",
+        type=int,
+        default=8,
+        help="Batch size of data. Default is 8.",
+    )
+    parser.add_argument(
+        "--it",
+        type=int,
+        default=1,
+        help="Number of iterations of requests. Default is 1.",
+    )
+    return parser
 
 
 class Client:
@@ -57,7 +82,7 @@ class Client:
             timeout.start()
             self._receive_results()
             self._disconnect()
-        except KeyboardInterrupt as _:
+        except KeyboardInterrupt:
             self._shutdown()
 
     @timer(Timers.PERF_COUNTER)
@@ -224,10 +249,8 @@ class Client:
 
 
 def launch():
-    model_name = sys.argv[1]
-    batch_size = int(sys.argv[2])
-    it = int(sys.argv[3])
-    client = Client(model_name, batch_size, it)
+    args: ArgumentParser = get_parser().parse_args()
+    client = Client(args.model_name, args.batch_size, args.it)
     client.run()
 
 

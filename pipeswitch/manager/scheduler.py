@@ -50,7 +50,7 @@ class Scheduler(Process):
                 runner_id, status = self._runner_status_queue.get()
                 logger.debug(f"{self._name}: Runner {runner_id} {status}")
                 self._runner_status[runner_id] = status
-        except KeyboardInterrupt as _:
+        except KeyboardInterrupt:
             return
 
     @timer(Timers.PROCESS_TIMER)

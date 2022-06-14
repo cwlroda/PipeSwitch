@@ -5,49 +5,87 @@ This module is the main entry point for the PipeSwitch Manager.
 
 Run this file from the main directory of the project::
 
-    $ python3 main.py <num_gpus>
+    $ python3 main.py [-h] [--args]
 
 For profiling, run:
 
-    $ py-spy top --pid <PID> --subprocesses
+    $ py-spy top --pid <PID> --subprocesses --nonblocking
+    $ python profiling/profile.py [-h] [--args]
 
 Todo:
     * None
 """
 
 import os
-import sys
+import shutil
+from argparse import ArgumentParser
 import torch.multiprocessing as mp
 from redis import exceptions, Redis
 
 from pipeswitch.common.consts import REDIS_HOST, REDIS_PORT, TIMING_LOG_FILE
+from pipeswitch.common.exceptions import GPUError
 from pipeswitch.common.logger import logger
 from pipeswitch.manager.manager import PipeSwitchManager
 
 
-def clear_timing_log():
+def clear_timing_log() -> None:
+    if not os.path.exists(TIMING_LOG_FILE):
+        os.makedirs(os.path.dirname(TIMING_LOG_FILE), exist_ok=True)
+    if os.stat(TIMING_LOG_FILE).st_size != 0:
+        archive_file = os.path.join(
+            os.path.dirname(TIMING_LOG_FILE),
+            f"{os.stat(TIMING_LOG_FILE).st_mtime}.txt",
+        )
+        _ = shutil.copyfile(TIMING_LOG_FILE, archive_file)
     with open(TIMING_LOG_FILE, "w", encoding="utf-8") as f:
         f.write("")
+
+
+def get_parser() -> ArgumentParser:
+    parser = ArgumentParser(description="PipeSwitch Run Script")
+
+    parser.add_argument(
+        "--mode",
+        type=str,
+        default="cpu",
+        help="Mode of the PipeSwitchManager: 'gpu' or 'cpu'. Default is 'cpu'",
+    )
+    parser.add_argument(
+        "--num_gpus",
+        type=int,
+        default=1,
+        help="Number of GPUs to use. Default is 1.",
+    )
+    parser.add_argument(
+        "--redis",
+        action="store_true",
+        default=False,
+        help="Whether to start a local Redis server. Default is False.",
+    )
+    return parser
 
 
 def launch():
     try:
         logger.info(f"PID: {os.getpid()}")
+        args: ArgumentParser = get_parser().parse_args()
+        logger.info(f"Arguments: {str(args)}")
         clear_timing_log()
+
+        if args.redis:
+            os.system("redis-server redis.conf")
         redis = Redis(host=REDIS_HOST, port=REDIS_PORT)
         if not redis.ping():
             logger.warning("Cannot connect to Redis server.")
             logger.warning("Please restart Redis.")
             return
-        # os.system("redis-server redis.conf")
+
         try:
             mp.set_start_method("spawn")
         except RuntimeError:
             pass
-        mode = sys.argv[1]
-        num_gpus = int(sys.argv[2]) if len(sys.argv) > 2 else 1
         manager: PipeSwitchManager = PipeSwitchManager(
-            mode=mode, num_gpus=num_gpus
+            mode=args.mode, num_gpus=args.num_gpus
         )
         manager.daemon = True
         manager.start()
@@ -55,10 +93,25 @@ def launch():
     except exceptions.ConnectionError as conn_err:
         logger.error(conn_err)
         logger.warning("Redis server is not running")
-        logger.warning("Please start it before running the script.")
-    except KeyboardInterrupt as _:
-        manager.shutdown()
-        # os.system("redis-cli shutdown")
+        logger.warning(
+            "Please start it before running the script, or add the '--redis'"
+            " flag to automatically start a local Redis server."
+        )
+    except BrokenPipeError:
+        pass
+    except ConnectionResetError:
+        pass
+    except GPUError:
+        pass
+    except KeyboardInterrupt:
+        pass
+    except Exception:  # pylint: disable=broad-except
+        pass
+    finally:
+        if "manager" in locals():
+            manager.shutdown()
+        if args.redis:
+            os.system("redis-cli shutdown")
 
 
 if __name__ == "__main__":

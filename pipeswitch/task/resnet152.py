@@ -1,7 +1,8 @@
 import os
 import torch
 
-from pipeswitch.common.consts import timer, Timers
+from pipeswitch.common.consts import Timers
+from pipeswitch.profiling.timer import timer
 import pipeswitch.task.common as util
 
 

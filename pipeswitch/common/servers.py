@@ -88,7 +88,7 @@ class RedisServer(ABC, Thread):
                 )
                 if msg is not None:
                     self._process_msg(msg)
-        except KeyboardInterrupt as _:
+        except KeyboardInterrupt:
             return
 
     @timer(Timers.PERF_COUNTER)

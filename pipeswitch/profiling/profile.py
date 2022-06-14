@@ -1,12 +1,29 @@
 import os
 import time
+from argparse import ArgumentParser
 from colorama import Back, Style
 
 from pipeswitch.common.consts import LATENCY_THRESHOLD, TIMING_LOG_FILE
 
 
+def get_parser() -> ArgumentParser:
+    parser = ArgumentParser(description="FsDet demo for builtin models")
+
+    parser.add_argument(
+        "--sort",
+        type=str,
+        default="chrono",
+        help=(
+            "How profiling results are sorted: 'asc', 'desc', or 'chrono'."
+            " Default is 'chrono'"
+        ),
+    )
+    return parser
+
+
 def launch():
     try:
+        args: ArgumentParser = get_parser().parse_args()
         last_modified_time = -1
 
         while True:
@@ -18,10 +35,16 @@ def launch():
                     file=TIMING_LOG_FILE, mode="r", encoding="utf-8"
                 ) as f:
                     timing_list = [line.split("'") for line in f.readlines()]
-                    timing_list.sort(
-                        key=lambda x: float(x[2].strip().split(" ")[0]),
-                        reverse=True,
-                    )
+
+                    if args.sort == "asc":
+                        timing_list.sort(
+                            key=lambda x: float(x[2].strip().split(" ")[0]),
+                        )
+                    elif args.sort == "desc":
+                        timing_list.sort(
+                            key=lambda x: float(x[2].strip().split(" ")[0]),
+                            reverse=True,
+                        )
 
                     os.system("clear")
                     print(
@@ -43,7 +66,7 @@ def launch():
 
             time.sleep(1)
 
-    except KeyboardInterrupt as _:
+    except KeyboardInterrupt:
         return
 
 

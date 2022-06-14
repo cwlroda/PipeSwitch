@@ -14,6 +14,7 @@ from gpustat import GPUStat, GPUStatCollection  # type: ignore
 import torch
 
 from pipeswitch.common.consts import Timers
+from pipeswitch.common.exceptions import GPUError
 from pipeswitch.common.logger import logger
 from pipeswitch.profiling.timer import timer
 
@@ -63,7 +64,7 @@ class GPUResourceAllocator(object):
                 f"{self._name}: Unable to acquire {num_gpus} GPUs, there are"
                 f" only {len(free_gpus)} available."
             )
-            raise KeyboardInterrupt
+            raise GPUError
 
         available_gpus = free_gpus[:num_gpus]
         gpu_str: str = ",".join([str(i) for i in available_gpus])
@@ -115,10 +116,10 @@ class GPUResourceAllocator(object):
         os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
         if not torch.cuda.is_available():
             logger.error(f"{self._name}: CUDA is not available")
-            raise KeyboardInterrupt
+            raise GPUError
         if len(self._gpus) < 1 or torch.cuda.device_count() < 1:
             logger.error(f"{self._name}: No GPUs available")
-            raise KeyboardInterrupt
+            raise GPUError
 
     def _get_gpus(self) -> OrderedDict[int, GPUStat]:
         """Uses gpustat to query all GPUs in the system.

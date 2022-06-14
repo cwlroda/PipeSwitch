@@ -133,7 +133,7 @@ class Runner(Process):
             while self._do_run:
                 task: OrderedDict[str, Any] = self._task_out.recv()
                 self._manage_task(task)
-        except KeyboardInterrupt as _:
+        except KeyboardInterrupt:
             return
 
     @timer(Timers.PERF_COUNTER)

@@ -3,8 +3,9 @@ import time
 
 import torch
 
-from pipeswitch.common.consts import timer, Timers
+from pipeswitch.common.consts import Timers
 from pipeswitch.common.logger import logger
+from pipeswitch.profiling.timer import timer
 import pipeswitch.task.common as util
 from pipeswitch.task.resnet152 import ResNet152
 

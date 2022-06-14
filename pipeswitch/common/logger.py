@@ -1,4 +1,5 @@
 """Define logger and its format."""
+import os
 import logging
 from colorama import Fore, Style
 import verboselogs
@@ -101,6 +102,9 @@ logger.setLevel(logging.SPAM)
 stdout_handler = logging.StreamHandler()
 stdout_handler.setLevel(logging.INFO)
 stdout_handler.setFormatter(Formatter())
+
+if not os.path.exists(TIMING_LOG_FILE):
+    os.makedirs(os.path.dirname(TIMING_LOG_FILE), exist_ok=True)
 
 file_handler = TimingFileHandler(TIMING_LOG_FILE)
 file_handler.setLevel(logging.VERBOSE)

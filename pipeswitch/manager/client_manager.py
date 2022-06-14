@@ -54,7 +54,7 @@ class ClientManager(Process):
             check_results.start()
             while self._do_run:
                 self._manage_connections(self._conn_queue.get())
-        except KeyboardInterrupt as _:
+        except KeyboardInterrupt:
             return
 
     @timer(Timers.PERF_COUNTER)

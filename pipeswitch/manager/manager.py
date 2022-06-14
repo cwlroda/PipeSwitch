@@ -66,9 +66,9 @@ class PipeSwitchManager(Thread):
         self._do_run: bool = True
         self._mode: str = mode
         self._num_gpus: int = num_gpus
-        self._manager: Manager = Manager()
         if self._mode == "gpu":
             self._gra: GPUResourceAllocator = GPUResourceAllocator()
+        self._manager: Manager = Manager()
         self._runner_status: OrderedDict[int, State] = self._manager.dict()
         self._runner_status_queue: "Queue[Tuple[int, State]]" = Queue()
         self._requests_queue: "Queue[OrderedDict[str, Any]]" = Queue()
@@ -105,7 +105,7 @@ class PipeSwitchManager(Thread):
             while len(self.scheduler.runner_status) < 1 or len(
                 self._models
             ) != len(self._model_list):
-                sleep(0.001)
+                sleep(1)
             logger.success(
                 "\n******************************************\n"
                 f"{self._name}: Ready to execute tasks!\n"
@@ -130,25 +130,24 @@ class PipeSwitchManager(Thread):
                         f" {task['task_id']} from client {task['client_id']}"
                     )
                     self._allocate_tasks(task)
-        except BrokenPipeError as _:
-            return
-        except ConnectionResetError as _:
-            return
-        except KeyboardInterrupt as _:
+        except KeyboardInterrupt:
             return
 
     @timer(Timers.PERF_COUNTER)
     def shutdown(self) -> None:
         logger.warning(f"{self._name}: Shutting down")
-        self._client_manager.terminate()
-        logger.warning(f"{self._name}: Terminated client manager")
-        self.scheduler.terminate()
-        logger.warning(f"{self._name}: Terminated scheduler")
-        for runner in self._runners.values():
-            runner.terminate()
-        logger.warning(f"{self._name}: Terminated runners")
+        if hasattr(self, "_client_manager"):
+            self._client_manager.terminate()
+            logger.warning(f"{self._name}: Terminated client manager")
+        if hasattr(self, "_scheduler"):
+            self.scheduler.terminate()
+            logger.warning(f"{self._name}: Terminated scheduler")
+        if hasattr(self, "_runners"):
+            for runner in self._runners.values():
+                runner.terminate()
+            logger.warning(f"{self._name}: Terminated runners")
         self.do_run = False
-        if self._mode == "gpu":
+        if self._mode == "gpu" and hasattr(self, "_gra"):
             self._gra.release_gpus()
         logger.info(f"{self._name}: Successfully shut down")
 
@@ -217,25 +216,28 @@ class PipeSwitchManager(Thread):
 
     @timer(Timers.THREAD_TIMER)
     def _load_model(self, model_name, model_class) -> None:
-        # Import parameters
-        logger.debug(f"{self._name}: Loading model {model_name}")
-        logger.debug(f"{self._name}: Importing {model_name} parameters")
-        batched_parameter_list: List[Any] = model_class.import_parameters()
+        try:
+            # Import parameters
+            logger.debug(f"{self._name}: Loading model {model_name}")
+            logger.debug(f"{self._name}: Importing {model_name} parameters")
+            batched_parameter_list: List[Any] = model_class.import_parameters()
 
-        # Preprocess batches
-        logger.debug(f"{self._name}: Preprocessing {model_name} parameters")
+            # Preprocess batches
+            logger.debug(f"{self._name}: Preprocessing {model_name} parameters")
 
-        self._models[model_name] = [
-            (None, mod_list)
-            if param is None
-            else (param.pin_memory(), mod_list)
-            for param, mod_list in batched_parameter_list
-        ]
-        logger.spam(
-            f"\n{pformat(object=self._models[model_name], indent=1, width=1)}"
-        )
+            self._models[model_name] = [
+                (None, mod_list)
+                if param is None
+                else (param.pin_memory(), mod_list)
+                for param, mod_list in batched_parameter_list
+            ]
+            logger.spam(
+                f"\n{pformat(object=self._models[model_name], indent=1, width=1)}"
+            )
 
-        logger.debug(f"{self._name}: Loaded model {model_name}")
+            logger.debug(f"{self._name}: Loaded model {model_name}")
+        except KeyboardInterrupt as kb_err:
+            raise KeyboardInterrupt from kb_err
 
     @timer(Timers.PERF_COUNTER)
     def _create_runners(self) -> None:

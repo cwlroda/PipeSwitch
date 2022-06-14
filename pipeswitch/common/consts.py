@@ -6,7 +6,7 @@ REDIS_HOST = "127.0.0.1"
 REDIS_PORT = 6379
 
 # timing log file name
-TIMING_LOG_FILE = "profiling/timing_log.txt"
+TIMING_LOG_FILE = "profiling/logs/timing_log.txt"
 # latency threshold (in ms)
 LATENCY_THRESHOLD = 10
 
