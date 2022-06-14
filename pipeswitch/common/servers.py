@@ -15,8 +15,9 @@ from typing import Any, List, OrderedDict, Tuple
 from redis import Redis
 from pprint import pformat
 
-from pipeswitch.common.consts import timer, Timers
+from pipeswitch.common.consts import Timers
 from pipeswitch.common.logger import logger
+from pipeswitch.profiling.timer import timer
 
 
 class RedisServer(ABC, Thread):

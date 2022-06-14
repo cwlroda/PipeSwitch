@@ -11,7 +11,6 @@ from pipeswitch.common.consts import (
     REDIS_PORT,
     ResponseStatus,
     State,
-    timer,
     Timers,
 )
 from pipeswitch.common.logger import logger
@@ -20,6 +19,7 @@ from pipeswitch.common.servers import (
     ClientRequestsServer,
     RedisServer,
 )
+from pipeswitch.profiling.timer import timer
 
 
 class Client:

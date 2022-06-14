@@ -6,8 +6,9 @@ from torch.multiprocessing import (  # pylint: disable=unused-import
     Queue,
 )
 
-from pipeswitch.common.consts import State, timer, Timers
+from pipeswitch.common.consts import State, Timers
 from pipeswitch.common.logger import logger
+from pipeswitch.profiling.timer import timer
 
 
 class Policy(ABC):

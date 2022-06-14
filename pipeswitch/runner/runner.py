@@ -31,10 +31,10 @@ from pipeswitch.common.consts import (
     REDIS_HOST,
     REDIS_PORT,
     State,
-    timer,
     Timers,
 )
 from pipeswitch.common.logger import logger
+from pipeswitch.profiling.timer import timer
 from pipeswitch.runner.runner_common import ModelSummary
 
 

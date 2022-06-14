@@ -26,11 +26,12 @@ import torch
 from torch.multiprocessing import Manager, Process, Queue
 from pprint import pformat
 
-from pipeswitch.common.consts import State, timer, Timers
+from pipeswitch.common.consts import State, Timers
 from pipeswitch.common.logger import logger
 from pipeswitch.manager.client_manager import ClientManager
 from pipeswitch.manager.gpu_resource_allocator import GPUResourceAllocator
 from pipeswitch.manager.scheduler import Scheduler
+from pipeswitch.profiling.timer import timer
 from pipeswitch.runner.runner import Runner
 
 
@@ -90,7 +91,7 @@ class PipeSwitchManager(Thread):
         """
         try:
             self._setup()
-            logger.info(f"{self._name} setup done")
+            logger.debug(f"{self._name} setup done")
             while not self._client_manager.ready:
                 sleep(0.001)
             logger.success(
@@ -105,7 +106,11 @@ class PipeSwitchManager(Thread):
                 self._models
             ) != len(self._model_list):
                 sleep(0.001)
-            logger.success(f"{self._name}: Ready to execute tasks!")
+            logger.success(
+                "\n******************************************\n"
+                f"{self._name}: Ready to execute tasks!\n"
+                "******************************************"
+            )
             while self._do_run:
                 task: OrderedDict[str, Any] = self._requests_queue.get()
                 logger.info(
@@ -125,6 +130,10 @@ class PipeSwitchManager(Thread):
                         f" {task['task_id']} from client {task['client_id']}"
                     )
                     self._allocate_tasks(task)
+        except BrokenPipeError as _:
+            return
+        except ConnectionResetError as _:
+            return
         except KeyboardInterrupt as _:
             return
 
@@ -146,7 +155,7 @@ class PipeSwitchManager(Thread):
     @timer(Timers.PROCESS_TIMER)
     def _setup(self) -> None:
         """Run setup tasks in the manager."""
-        logger.info(f"{self._name}: Start")
+        logger.debug(f"{self._name}: Start")
         self._client_manager.daemon = True
         self._client_manager.start()
         if self._mode == "gpu":
@@ -179,7 +188,7 @@ class PipeSwitchManager(Thread):
             logger.error(f"{self._name}: Model list file {file_name} not found")
             raise KeyboardInterrupt
 
-        with open(file=file_name, encoding="utf-8") as f:
+        with open(file=file_name, mode="r", encoding="utf-8") as f:
             self._model_list: List[str] = [
                 line.strip() for line in f.readlines()
             ]
