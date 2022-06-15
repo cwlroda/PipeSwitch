@@ -672,37 +672,37 @@ def utilization(device: Optional[Union[Device, int]] = None) -> int:
 
 
 # PipeSwitch
-def allocate_shared_cache(device):
+def allocate_cache(device):
     if _initialized:
         torch._C._cuda_allocateSharedCache(device)
 
 
 # PipeSwitch
-def send_shared_cache(device):
+def send_cache(device):
     if _initialized:
         torch._C._cuda_sendSharedCache(device)
 
 
 # PipeSwitch
-def recv_shared_cache(device):
+def recv_cache(device):
     if _initialized:
         torch._C._cuda_recvSharedCache(device)
 
 
 # PipeSwitch
-def insert_shared_cache_for_parameter(device):
+def insert_cache_for_param(device):
     if _initialized:
         torch._C._cuda_insertSharedCacheForParameter(device)
 
 
 # PipeSwitch
-def insert_shared_cache_for_computation(device):
+def insert_cache_for_comp(device):
     if _initialized:
         torch._C._cuda_insertSharedCacheForComputation(device)
 
 
 # PipeSwitch
-def clear_shared_cache(device):
+def clear_cache(device):
     if _initialized:
         torch._C._cuda_clearSharedCache(device)
 
