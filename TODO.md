@@ -22,3 +22,4 @@
     2. [ ] Multi-GPU models for model parallelism testing
 11. [x] Convert pubsub to streams for greater message reliability
 12. [x] Proper thread and process shutdown (no semaphore leaks)
+13. [ ] More efficient scheduling algorithm for runners

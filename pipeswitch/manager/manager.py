@@ -323,6 +323,7 @@ class PipeSwitchManager(Thread):
                 f"{self._name}: clear shared cache for runner {runner_id}"
             )
 
+    @timer(Timers.PERF_COUNTER)
     def _transfer_parameter(
         self,
         batched_parameter_list,
@@ -330,8 +331,8 @@ class PipeSwitchManager(Thread):
         param_trans_pipe,
     ):
         param_cuda_list = []
-        for param, mod_list in batched_parameter_list:
-            with torch.cuda.stream(cuda_stream_for_parameter):
+        with torch.cuda.stream(cuda_stream_for_parameter):
+            for param, mod_list in batched_parameter_list:
                 if param is not None:
                     param_cuda = param.cuda(non_blocking=True)
                     param_cuda_list.append(param_cuda)

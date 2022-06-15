@@ -34,7 +34,7 @@ class ModelSummary:
                 mod = mod_sublist[0]
                 mod.initialized = False
 
-                @timer(Timers.PERF_COUNTER)
+                # @timer(Timers.PERF_COUNTER)
                 def hook_wait_for_parameter_lock(mod, *_):
                     if not mod.initialized:
                         complete_name = self.param_trans_pipe.recv()
