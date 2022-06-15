@@ -59,7 +59,7 @@ class GPUResourceAllocator(object):
         free_gpus: List[int] = self._get_free_gpus()
         if num_gpus == 0:
             num_gpus = len(free_gpus)
-        if num_gpus > 0 and num_gpus <= len(free_gpus):
+        if num_gpus > len(free_gpus):
             logger.error(
                 f"{self._name}: Unable to acquire {num_gpus} GPUs, there are"
                 f" only {len(free_gpus)} available."

@@ -4,7 +4,23 @@ import logging
 from colorama import Fore, Style
 import verboselogs
 
-from pipeswitch.common.consts import TIMING_LOG_FILE
+from pipeswitch.common.consts import DEBUG_LOG_FILE, TIMING_LOG_FILE
+
+
+class DebugFormatter(logging.Formatter):
+    """Logging colored formatter"""
+
+    def __init__(self):
+        super().__init__()
+        self._formats = {
+            logging.VERBOSE: "[%(asctime)s,%(msecs)010.6f]\t%(message)s",
+        }
+
+    def format(self, record):
+        log_fmt = self._formats.get(record.levelno)
+        date_fmt = "%Y-%m-%d %H:%M:%S"
+        formatter = logging.Formatter(fmt=log_fmt, datefmt=date_fmt)
+        return formatter.format(record)
 
 
 class TimingFileHandler(logging.FileHandler):
@@ -95,7 +111,6 @@ class Formatter(logging.Formatter):
 
 
 verboselogs.install()
-
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.SPAM)
 
@@ -103,12 +118,25 @@ stdout_handler = logging.StreamHandler()
 stdout_handler.setLevel(logging.INFO)
 stdout_handler.setFormatter(Formatter())
 
+if not os.path.exists(DEBUG_LOG_FILE):
+    os.makedirs(os.path.dirname(DEBUG_LOG_FILE), exist_ok=True)
+
+DEBUG_FORMAT = (
+    "[%(asctime)s,%(msecs)010.6f %(filename)s:%(lineno)d %(funcName)s]"
+    " %(message)s"
+)
+debug_formatter = logging.Formatter(fmt=DEBUG_FORMAT)
+debug_handler = logging.FileHandler(DEBUG_LOG_FILE)
+debug_handler.setLevel(logging.DEBUG)
+debug_handler.setFormatter(debug_formatter)
+
 if not os.path.exists(TIMING_LOG_FILE):
     os.makedirs(os.path.dirname(TIMING_LOG_FILE), exist_ok=True)
 
-file_handler = TimingFileHandler(TIMING_LOG_FILE)
-file_handler.setLevel(logging.VERBOSE)
-file_handler.setFormatter(TimingFormatter())
+timing_handler = TimingFileHandler(TIMING_LOG_FILE)
+timing_handler.setLevel(logging.VERBOSE)
+timing_handler.setFormatter(TimingFormatter())
 
 logger.addHandler(stdout_handler)
-logger.addHandler(file_handler)
+logger.addHandler(debug_handler)
+logger.addHandler(timing_handler)

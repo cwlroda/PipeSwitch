@@ -87,7 +87,7 @@ class Client:
 
     @timer(Timers.PERF_COUNTER)
     def _connect(self) -> None:
-        msg = {
+        msg: OrderedDict[str, Any] = {
             "client_id": self._client_id,
             "request": ConnectionRequest.CONNECT.value,
         }

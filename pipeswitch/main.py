@@ -22,23 +22,14 @@ from argparse import ArgumentParser
 import torch.multiprocessing as mp
 from redis import exceptions, Redis
 
-from pipeswitch.common.consts import REDIS_HOST, REDIS_PORT, TIMING_LOG_FILE
-from pipeswitch.common.exceptions import GPUError
+from pipeswitch.common.consts import (
+    DEBUG_LOG_FILE,
+    REDIS_HOST,
+    REDIS_PORT,
+    TIMING_LOG_FILE,
+)
 from pipeswitch.common.logger import logger
 from pipeswitch.manager.manager import PipeSwitchManager
-
-
-def clear_timing_log() -> None:
-    if not os.path.exists(TIMING_LOG_FILE):
-        os.makedirs(os.path.dirname(TIMING_LOG_FILE), exist_ok=True)
-    if os.stat(TIMING_LOG_FILE).st_size != 0:
-        archive_file = os.path.join(
-            os.path.dirname(TIMING_LOG_FILE),
-            f"{os.stat(TIMING_LOG_FILE).st_mtime}.txt",
-        )
-        _ = shutil.copyfile(TIMING_LOG_FILE, archive_file)
-    with open(TIMING_LOG_FILE, "w", encoding="utf-8") as f:
-        f.write("")
 
 
 def get_parser() -> ArgumentParser:
@@ -65,12 +56,26 @@ def get_parser() -> ArgumentParser:
     return parser
 
 
+def clear_logs(file: str) -> None:
+    if not os.path.exists(file):
+        os.makedirs(os.path.dirname(file), exist_ok=True)
+    if os.stat(file).st_size != 0:
+        archive_file = os.path.join(
+            os.path.dirname(file),
+            f"{os.stat(file).st_mtime}.log",
+        )
+        _ = shutil.copyfile(file, archive_file)
+    with open(file, "w", encoding="utf-8") as f:
+        f.write("")
+
+
 def launch():
     try:
+        clear_logs(DEBUG_LOG_FILE)
+        clear_logs(TIMING_LOG_FILE)
         logger.info(f"PID: {os.getpid()}")
         args: ArgumentParser = get_parser().parse_args()
         logger.info(f"Arguments: {str(args)}")
-        clear_timing_log()
 
         if args.redis:
             os.system("redis-server redis.conf")
@@ -80,10 +85,6 @@ def launch():
             logger.warning("Please restart Redis.")
             return
 
-        try:
-            mp.set_start_method("spawn")
-        except RuntimeError:
-            pass
         manager: PipeSwitchManager = PipeSwitchManager(
             mode=args.mode, num_gpus=args.num_gpus
         )
@@ -97,16 +98,14 @@ def launch():
             "Please start it before running the script, or add the '--redis'"
             " flag to automatically start a local Redis server."
         )
-    except BrokenPipeError:
-        pass
-    except ConnectionResetError:
-        pass
-    except GPUError:
-        pass
-    except KeyboardInterrupt:
-        pass
-    except Exception:  # pylint: disable=broad-except
-        pass
+    except BrokenPipeError as err:
+        logger.error(err)
+    except ConnectionResetError as err:
+        logger.error(err)
+    except KeyboardInterrupt as err:
+        logger.error(err)
+    except Exception as err:  # pylint: disable=broad-except
+        logger.error(err)
     finally:
         if "manager" in locals():
             manager.shutdown()
@@ -115,4 +114,5 @@ def launch():
 
 
 if __name__ == "__main__":
+    mp.set_start_method("spawn", force=True)
     launch()

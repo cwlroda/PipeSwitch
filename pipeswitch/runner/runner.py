@@ -109,7 +109,6 @@ class Runner(Process):
                 decode_responses=True,
             )
             if self._mode == "gpu":
-                torch.cuda.set_device(device=self._device)
                 torch.cuda.recv_cache(device=self._device)
                 logger.debug(f"{self._name} {self._device}: share GPU memory")
                 load_jobs = []
@@ -204,7 +203,8 @@ class Runner(Process):
     ) -> Any:
         """Executes a task."""
         # TODO: run inference on a proper model
-        data = self._load_data(task)
+        # data = self._load_data(task)
+        data = self._load_data()
         logger.spam(
             f"{self._name} {self._device} data:"
             f" \n{pformat(object=data, indent=1, width=1)}"
@@ -225,64 +225,82 @@ class Runner(Process):
             sleep(5)
         return output
 
-    @timer(Timers.PERF_COUNTER)
-    def transfer_parameter(
-        self,
-        batched_parameter_list,
-        cuda_stream_for_parameter,
-        param_trans_pipe,
-    ):
-        param_cuda_list = []
-        for param, mod_list in batched_parameter_list:
-            with torch.cuda.stream(cuda_stream_for_parameter):
-                if param is not None:
-                    param_cuda = param.cuda(non_blocking=True)
-                    param_cuda_list.append(param_cuda)
-                    e = torch.cuda.Event(enable_timing=True)
-                    e.record()
-                    e.synchronize()
-                param_trans_pipe.send(mod_list[0])
+    # @timer(Timers.PERF_COUNTER)
+    # def _load_data(self, task: str) -> Image:
+    #     """Loads data from redis store"""
+    #     try:
+    #         while not self._data_loader.ping():
+    #             logger.error(
+    #                 f"{self._name} {self._device} data loader: connection"
+    #                 " failed!"
+    #             )
+    #             logger.error(
+    #                 f"{self._name} {self._device} data loader: reconnecting in"
+    #                 " 5s..."
+    #             )
+    #             sleep(5)
+    #         data_str = self._data_loader.get(task["task_key"])
+    #         data = json.loads(data_str)
+    #         logger.debug(
+    #             f"{self._name} {self._device}: retrieved data for task"
+    #             f" {task['model_name']} {task['task_type']} with id"
+    #             f" {task['task_id']} from client {task['client_id']}"
+    #         )
+    #         logger.spam(f"\n{pformat(object=data, indent=1, width=1)}")
+    #         img_url = data["task"]["items"][0]["urls"]["-1"]
+    #         img_name = img_url.split("/")[-1]
+    #         if not os.path.exists(img_name):
+    #             logger.debug(
+    #                 f"{self._name} {self._device}: Downloading image"
+    #                 f" {img_name}..."
+    #             )
+    #             request.urlretrieve(img_url, img_name)
+    #         img = Image.open(img_name)
+    #         return img
+    #     except exceptions.ConnectionError as conn_err:
+    #         logger.error(conn_err)
+    #         raise exceptions.ConnectionError from conn_err
+    #     except exceptions.RedisError as redis_err:
+    #         logger.error(redis_err)
+    #         raise exceptions.RedisError from redis_err
+    #     except KeyboardInterrupt as kb_err:
+    #         raise KeyboardInterrupt from kb_err
 
     @timer(Timers.PERF_COUNTER)
-    def _load_data(self, task: str) -> OrderedDict[str, Any]:
-        """Loads data from redis store"""
-        try:
-            while not self._data_loader.ping():
-                logger.error(
-                    f"{self._name} {self._device} data loader: connection"
-                    " failed!"
-                )
-                logger.error(
-                    f"{self._name} {self._device} data loader: reconnecting in"
-                    " 5s..."
-                )
-                sleep(5)
-            data_str = self._data_loader.get(task["task_key"])
-            data = json.loads(data_str)
-            logger.debug(
-                f"{self._name} {self._device}: retrieved data for task"
-                f" {task['model_name']} {task['task_type']} with id"
-                f" {task['task_id']} from client {task['client_id']}"
-            )
-            logger.spam(f"\n{pformat(object=data, indent=1, width=1)}")
-            img_url = data["task"]["items"][0]["urls"]["-1"]
-            img_name = img_url.split("/")[-1]
-            if not os.path.exists(img_name):
-                logger.debug(
-                    f"{self._name} {self._device}: Downloading image"
-                    f" {img_name}..."
-                )
-                request.urlretrieve(img_url, img_name)
-            img = Image.open(img_name)
-            return img
-        except exceptions.ConnectionError as conn_err:
-            logger.error(conn_err)
-            raise exceptions.ConnectionError from conn_err
-        except exceptions.RedisError as redis_err:
-            logger.error(redis_err)
-            raise exceptions.RedisError from redis_err
-        except KeyboardInterrupt as kb_err:
-            raise KeyboardInterrupt from kb_err
+    def _load_data(self):
+        filename = "dog.jpg"
+
+        # Download an example image from the pytorch website
+        if not os.path.isfile(filename):
+            import urllib
+
+            url = "https://github.com/pytorch/hub/raw/master/images/dog.jpg"
+            try:
+                urllib.URLopener().retrieve(url, filename)
+            except:
+                urllib.request.urlretrieve(url, filename)
+
+        # sample execution (requires torchvision)
+        from torchvision import transforms
+
+        input_image = Image.open(filename)
+        preprocess = transforms.Compose(
+            [
+                transforms.Resize(256),
+                transforms.CenterCrop(224),
+                transforms.ToTensor(),
+                transforms.Normalize(
+                    mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
+                ),
+            ]
+        )
+        input_tensor = preprocess(input_image)
+        image = input_tensor.unsqueeze(
+            0
+        )  # create a mini-batch as expected by the model
+
+        images = torch.cat([image] * 8)
+        return images
 
     @property
     def model_in(self):

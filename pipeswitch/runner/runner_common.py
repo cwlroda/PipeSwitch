@@ -1,5 +1,8 @@
 import torch
 
+from pipeswitch.common.consts import Timers
+from pipeswitch.profiling.timer import timer
+
 
 class ModelSummary:
     def __init__(self, mode, device, model_name, model_class, param_trans_pipe):
@@ -10,6 +13,7 @@ class ModelSummary:
         self.model_class = model_class
         self.param_trans_pipe = param_trans_pipe
 
+    @timer(Timers.PERF_COUNTER)
     def execute(self, data_b):
         if data_b is None:
             return self.func(self.device, self.model, self.data_loader)
@@ -22,6 +26,7 @@ class ModelSummary:
         for child in mod.children():
             self.reset_initialized(child)
 
+    @timer(Timers.PERF_COUNTER)
     def insert_lock_hook(self, shape_summary_list):
         """ """
         for _, _, _, mod_sublist in shape_summary_list:
@@ -29,6 +34,7 @@ class ModelSummary:
                 mod = mod_sublist[0]
                 mod.initialized = False
 
+                @timer(Timers.PERF_COUNTER)
                 def hook_wait_for_parameter_lock(mod, *_):
                     if not mod.initialized:
                         complete_name = self.param_trans_pipe.recv()
@@ -41,6 +47,7 @@ class ModelSummary:
 
                 mod.register_forward_pre_hook(hook_wait_for_parameter_lock)
 
+    @timer(Timers.PERF_COUNTER)
     def insert_terminate_hook(self, mod):
         """ """
 
@@ -54,6 +61,7 @@ class ModelSummary:
             for child in mod.children():
                 self.insert_terminate_hook(child)
 
+    @timer(Timers.PERF_COUNTER)
     def load_model(self):
         (
             self.model,

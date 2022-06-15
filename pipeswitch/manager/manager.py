@@ -27,6 +27,7 @@ from torch.multiprocessing import Manager, Process, Queue
 from pprint import pformat
 
 from pipeswitch.common.consts import State, Timers
+from pipeswitch.common.exceptions import GPUError
 from pipeswitch.common.logger import logger
 from pipeswitch.manager.client_manager import ClientManager
 from pipeswitch.manager.gpu_resource_allocator import GPUResourceAllocator
@@ -71,10 +72,14 @@ class PipeSwitchManager(Thread):
         self._manager: Manager = Manager()
         self._runner_status: OrderedDict[int, State] = self._manager.dict()
         self._runner_status_queue: "Queue[Tuple[int, State]]" = Queue()
+        # self._clients: OrderedDict[str, RedisServer] = self._manager.dict()
+        # self._conn_queue: "Queue[OrderedDict[str, Any]]" = Queue()
         self._requests_queue: "Queue[OrderedDict[str, Any]]" = Queue()
         self._results_queue: "Queue[OrderedDict[str, Any]]" = Queue()
         self._client_blacklist: OrderedDict[str, int] = self._manager.dict()
         self._client_manager: ClientManager = ClientManager(
+            # clients=self._clients,
+            # conn_queue=self._conn_queue,
             requests_queue=self._requests_queue,
             results_queue=self._results_queue,
             client_blacklist=self._client_blacklist,
@@ -102,9 +107,9 @@ class PipeSwitchManager(Thread):
             logger.debug(
                 f"{self._name}: Waiting for at least one runner to be ready"
             )
-            while len(self.scheduler.runner_status) < 1 or len(
-                self._models
-            ) != len(self._model_list):
+            while len(self._runner_status) < 1 or len(self._models) != len(
+                self._model_list
+            ):
                 sleep(1)
             logger.success(
                 "\n******************************************\n"
@@ -130,6 +135,8 @@ class PipeSwitchManager(Thread):
                         f" {task['task_id']} from client {task['client_id']}"
                     )
                     self._allocate_tasks(task)
+        except GPUError:
+            return
         except KeyboardInterrupt:
             return
 
@@ -231,10 +238,7 @@ class PipeSwitchManager(Thread):
                 else (param.pin_memory(), mod_list)
                 for param, mod_list in batched_parameter_list
             ]
-            logger.spam(
-                f"\n{pformat(object=self._models[model_name], indent=1, width=1)}"
-            )
-
+            logger.spam(f"\n{pformat(object=self._models[model_name])}")
             logger.debug(f"{self._name}: Loaded model {model_name}")
         except KeyboardInterrupt as kb_err:
             raise KeyboardInterrupt from kb_err
@@ -293,7 +297,7 @@ class PipeSwitchManager(Thread):
 
             # Allocate cache to streams
             with torch.cuda.stream(cuda_stream_for_parameter):
-                torch.cuda.insert_shared_cache_for_parameter(runner_id)
+                torch.cuda.insert_cache_for_param(runner_id)
             logger.debug(
                 f"{self._name}: insert shared cache for parameters for runner"
                 f" {runner_id}"
@@ -314,7 +318,24 @@ class PipeSwitchManager(Thread):
 
             # Clear status
             with torch.cuda.stream(cuda_stream_for_parameter):
-                torch.cuda.clear_shared_cache(runner_id)
+                torch.cuda.clear_cache(runner_id)
             logger.debug(
                 f"{self._name}: clear shared cache for runner {runner_id}"
             )
+
+    def _transfer_parameter(
+        self,
+        batched_parameter_list,
+        cuda_stream_for_parameter,
+        param_trans_pipe,
+    ):
+        param_cuda_list = []
+        for param, mod_list in batched_parameter_list:
+            with torch.cuda.stream(cuda_stream_for_parameter):
+                if param is not None:
+                    param_cuda = param.cuda(non_blocking=True)
+                    param_cuda_list.append(param_cuda)
+                    e = torch.cuda.Event(enable_timing=True)
+                    e.record()
+                    e.synchronize()
+                param_trans_pipe.send(mod_list[0])

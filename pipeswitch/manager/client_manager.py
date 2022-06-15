@@ -24,6 +24,8 @@ class ClientManager(Process):
     @timer(Timers.PERF_COUNTER)
     def __init__(
         self,
+        # clients: OrderedDict[str, RedisServer],
+        # conn_queue: Queue,
         requests_queue: Queue,
         results_queue: Queue,
         client_blacklist: OrderedDict[str, int],
@@ -39,21 +41,22 @@ class ClientManager(Process):
         self._tasks_complete: int = 0
         self._tasks_failed: int = 0
         self._client_blacklist: OrderedDict[str] = client_blacklist
-        self.conn_server: RedisServer = ManagerClientConnectionServer(
-            host=REDIS_HOST,
-            port=REDIS_PORT,
-            sub_queue=self._conn_queue,
-        )
 
     def run(self) -> None:
         try:
+            self.conn_server: RedisServer = ManagerClientConnectionServer(
+                host=REDIS_HOST,
+                port=REDIS_PORT,
+                sub_queue=self._conn_queue,
+            )
             self.conn_server.daemon = True
             self.conn_server.start()
             check_results = Thread(target=self._check_results)
             check_results.daemon = True
             check_results.start()
             while self._do_run:
-                self._manage_connections(self._conn_queue.get())
+                conn: OrderedDict[str, Any] = self._conn_queue.get()
+                self._manage_connections(conn)
         except KeyboardInterrupt:
             return
 
@@ -169,4 +172,5 @@ class ClientManager(Process):
             )
 
     def ready(self) -> bool:
-        return self.conn_server.ready
+        if hasattr(self, "conn_server"):
+            return self.conn_server.ready
