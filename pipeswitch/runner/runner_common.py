@@ -13,7 +13,7 @@ class ModelSummary:
         self.model_class = model_class
         self.param_trans_pipe = param_trans_pipe
 
-    @timer(Timers.PERF_COUNTER)
+    @timer(Timers.THREAD_TIMER)
     def execute(self, data):
         return self.func(self.model, data)
 
@@ -23,7 +23,7 @@ class ModelSummary:
         for child in mod.children():
             self.reset_initialized(child)
 
-    @timer(Timers.PERF_COUNTER)
+    @timer(Timers.THREAD_TIMER)
     def insert_lock_hook(self, shape_summary_list):
         """ """
         for _, _, _, mod_sublist in shape_summary_list:
@@ -44,7 +44,7 @@ class ModelSummary:
 
                 mod.register_forward_pre_hook(hook_wait_for_parameter_lock)
 
-    @timer(Timers.PERF_COUNTER)
+    @timer(Timers.THREAD_TIMER)
     def insert_terminate_hook(self, mod):
         """ """
 
@@ -58,7 +58,7 @@ class ModelSummary:
             for child in mod.children():
                 self.insert_terminate_hook(child)
 
-    @timer(Timers.PERF_COUNTER)
+    @timer(Timers.THREAD_TIMER)
     def load_model(self):
         (
             self.model,
@@ -110,5 +110,6 @@ class ModelSummary:
                             shape, device=f"cuda:{self.device}"
                         )
 
+    @timer(Timers.THREAD_TIMER)
     def load_data(self, task_key):
         return self.model_class().import_data(task_key)

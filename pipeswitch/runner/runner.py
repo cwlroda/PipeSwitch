@@ -60,7 +60,7 @@ class Runner(Process):
             and sending results to the manager.
     """
 
-    @timer(Timers.PERF_COUNTER)
+    @timer(Timers.THREAD_TIMER)
     def __init__(
         self,
         mode: str,
@@ -85,6 +85,7 @@ class Runner(Process):
         self._model_list = model_list
         self._model_classes: OrderedDict[str, object] = model_classes
         self._models: OrderedDict[str, Any] = OrderedDict()
+        self._curr_model: str = ""
 
     def run(self) -> None:
         """Main runner function that sets up the runner and runs it.
@@ -118,7 +119,7 @@ class Runner(Process):
             task: OrderedDict[str, Any] = self._task_out.recv()
             self._manage_task(task)
 
-    @timer(Timers.PERF_COUNTER)
+    @timer(Timers.THREAD_TIMER)
     def _update_status(self, status: State) -> None:
         """Updates own runner status based on worker statuses"""
         try:
@@ -132,7 +133,7 @@ class Runner(Process):
         except KeyboardInterrupt as kb_err:
             raise KeyboardInterrupt from kb_err
 
-    @timer(Timers.PERF_COUNTER)
+    @timer(Timers.THREAD_TIMER)
     def _manage_task(self, task: OrderedDict[str, Any]) -> None:
         try:
             logger.debug(
@@ -164,6 +165,7 @@ class Runner(Process):
             )
             if self._mode == "gpu":
                 model_summary.reset_initialized(model_summary.model)
+                self._curr_model = f"{task['model_name']}_{task['task_type']}"
             self._update_status(State.IDLE)
         except RuntimeError as runtime_err:
             logger.error(runtime_err)
@@ -180,7 +182,7 @@ class Runner(Process):
         except KeyboardInterrupt as kb_err:
             raise KeyboardInterrupt from kb_err
 
-    @timer(Timers.PERF_COUNTER)
+    @timer(Timers.THREAD_TIMER)
     def _execute_task(
         self, task: OrderedDict[str, Any], model_summary: ModelSummary
     ) -> Any:
@@ -211,13 +213,15 @@ class Runner(Process):
             sleep(5)
         return output
 
+    @timer(Timers.THREAD_TIMER)
     def shutdown(self):
         """Shutdown the runner."""
         logger.debug(f"{self._name} {self._device}: stopping...")
         self._stop.set()
         if hasattr(self, "_load_jobs"):
             for load_job in self._load_jobs:
-                load_job.terminate()
+                if load_job.is_alive():
+                    load_job.terminate()
         logger.debug(f"{self._name} {self._device}: stopped!")
 
     @property
@@ -227,3 +231,7 @@ class Runner(Process):
     @property
     def task_in(self):
         return self._task_in
+
+    @property
+    def curr_model(self):
+        return self._curr_model

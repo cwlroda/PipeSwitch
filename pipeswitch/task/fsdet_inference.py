@@ -34,7 +34,7 @@ class FSDETInference:
 
         return inference
 
-    @timer(Timers.PERF_COUNTER)
+    @timer(Timers.THREAD_TIMER)
     def import_task(self, device):
         model = self.import_model(device)
         func = self.import_func()
@@ -42,7 +42,7 @@ class FSDETInference:
         shape_list = [util.group_to_shape(group) for group in group_list]
         return model, func, shape_list
 
-    @timer(Timers.PERF_COUNTER)
+    @timer(Timers.THREAD_TIMER)
     def import_parameters(self):
         model = self.import_model()
         group_list = self.fsdet.partition_model(model)

@@ -88,9 +88,7 @@ def launch():
         manager: PipeSwitchManager = PipeSwitchManager(
             mode=args.mode, num_gpus=args.num_gpus
         )
-        manager.daemon = True
-        manager.start()
-        manager.join()
+        manager.run()
     except exceptions.ConnectionError as conn_err:
         logger.error(conn_err)
         logger.warning("Redis server is not running")

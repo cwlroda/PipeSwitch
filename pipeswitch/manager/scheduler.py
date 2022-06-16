@@ -22,13 +22,13 @@ class Policy(ABC):
 
 
 class RoundRobinPolicy(Policy):
-    @timer(Timers.PERF_COUNTER)
+    @timer(Timers.THREAD_TIMER)
     def select_next(self, runners_list: List[int]) -> int:
         return runners_list[0]
 
 
 class Scheduler(Process):
-    @timer(Timers.PERF_COUNTER)
+    @timer(Timers.THREAD_TIMER)
     def __init__(
         self,
         num_runners: List[int],
@@ -51,11 +51,11 @@ class Scheduler(Process):
             logger.debug(f"{self._name}: Runner {runner_id} {status}")
             self._runner_status[runner_id] = status
 
-    @timer(Timers.PROCESS_TIMER)
+    @timer(Timers.THREAD_TIMER)
     def schedule(self) -> int:
         free_runners = self._get_free_runners()
         while len(free_runners) < 1:
-            sleep(0.25)
+            sleep(0.001)
             free_runners = self._get_free_runners()
 
         next_available_runner: int = self._policy.select_next(free_runners)
@@ -72,6 +72,7 @@ class Scheduler(Process):
             if status == State.IDLE
         ]
 
+    @timer(Timers.THREAD_TIMER)
     def shutdown(self):
         """Shutdown the runner."""
         logger.debug(f"{self._name}: stopping...")

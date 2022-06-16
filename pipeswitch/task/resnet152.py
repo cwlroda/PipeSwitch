@@ -52,7 +52,6 @@ class ResNet152(object):
         images = torch.cat([image] * batch_size)
         return images
 
-    @timer(Timers.PERF_COUNTER)
     def import_model(self):
         # from torchvision import models
 
@@ -70,7 +69,6 @@ class ResNet152(object):
         return model
 
     # TODO: figure out how model partitioning works
-    @timer(Timers.PERF_COUNTER)
     def partition_model(self, model):
         group_list = []
         before_core = []

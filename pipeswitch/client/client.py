@@ -182,7 +182,7 @@ class Client:
             msg = self._task_queue.get()
             self._send_request(msg)
 
-    @timer(Timers.PERF_COUNTER)
+    @timer(Timers.THREAD_TIMER)
     def _send_request(self, msg) -> None:
         logger.info(
             f"{self._name} {self._client_id}: sending task"
@@ -191,7 +191,6 @@ class Client:
         )
         self._pending_tasks[msg["task_id"]] = msg
         self.req_server.publish(msg)
-        time.sleep(0.01)  # Necessary to avoid missing messages
 
     @timer(Timers.PERF_COUNTER)
     def _receive_results(self) -> None:
@@ -203,8 +202,9 @@ class Client:
                     logger.success(
                         f"{self._name} {self._client_id}: received task"
                         f" {result['model_name']} {result['task_type']} with"
-                        f" id {result['task_id']} result {result['output']}"
+                        f" id {result['task_id']} result"
                     )
+                    logger.spam(f"{result['output']}")
                     task_count += 1
                     logger.info(
                         f"{self._name} {self._client_id}: completed task(s)"

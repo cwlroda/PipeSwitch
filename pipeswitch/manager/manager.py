@@ -36,7 +36,7 @@ from pipeswitch.profiling.timer import timer
 from pipeswitch.runner.runner import Runner
 
 
-class PipeSwitchManager(Thread):
+class PipeSwitchManager:
     """Manager thread that acts as a middleman between clients and runners.
 
     It has two main functions:
@@ -60,7 +60,7 @@ class PipeSwitchManager(Thread):
         scheduler (`Scheduler`): Thread that schedules tasks to runners.
     """
 
-    @timer(Timers.THREAD_TIMER)
+    @timer(Timers.PERF_COUNTER)
     def __init__(self, mode: str = "gpu", num_gpus: int = -1) -> None:
         super().__init__()
         self._name: str = self.__class__.__name__
@@ -134,7 +134,7 @@ class PipeSwitchManager(Thread):
                         f" {task['model_name']} {task['task_type']} with id"
                         f" {task['task_id']} from client {task['client_id']}"
                     )
-                    self._allocate_tasks(task)
+                    self._allocate_task(task)
         except GPUError:
             return
         except KeyboardInterrupt:
@@ -271,11 +271,11 @@ class PipeSwitchManager(Thread):
             runner.daemon = True
             runner.start()
             self._runners[runner_id] = runner
-            logger.info(f"{self._name}: Created runner in GPU {runner_id}")
+            logger.debug(f"{self._name}: Created runner in GPU {runner_id}")
             # break
 
-    @timer(Timers.PROCESS_TIMER)
-    def _allocate_tasks(self, task: OrderedDict[str, Any]) -> None:
+    @timer(Timers.PERF_COUNTER)
+    def _allocate_task(self, task: OrderedDict[str, Any]) -> None:
         runner_id = self._scheduler.schedule()
         runner = self._runners[runner_id]
         msg: OrderedDict[str, Any] = {
@@ -294,9 +294,12 @@ class PipeSwitchManager(Thread):
         )
         runner.task_in.send(msg)
 
-        if self._mode == "gpu":
+        if (
+            self._mode == "gpu"
+            and runner.curr_model != f"{task['model_name']}_{task['task_type']}"
+        ):
             # Create CUDA stream
-            cuda_stream_for_parameter = torch.cuda.Stream(runner_id)
+            cuda_stream_for_parameter = torch.cuda.Stream(device=runner_id)
             logger.debug(
                 f"{self._name}: create CUDA stream for runner {runner_id}"
             )
@@ -342,7 +345,7 @@ class PipeSwitchManager(Thread):
                 if param is not None:
                     param_cuda = param.cuda(non_blocking=True)
                     param_cuda_list.append(param_cuda)
-                    e = torch.cuda.Event(enable_timing=True)
+                    e = torch.cuda.Event()
                     e.record()
                     e.synchronize()
                 param_trans_pipe.send(mod_list[0])

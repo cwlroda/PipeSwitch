@@ -135,7 +135,6 @@ class FSDET:
         img = read_image(img_name, format="BGR")
         return img
 
-    @timer(Timers.PERF_COUNTER)
     def import_model(self, device=None):
         cfg = self.setup_cfg(self.args)
         if device is not None:
@@ -159,7 +158,6 @@ class FSDET:
         assert self.input_format in ["RGB", "BGR"], self.input_format
         return self.model
 
-    @timer(Timers.PERF_COUNTER)
     def partition_model(self, model):
         group_list = [[child] for child in model.children()]
         return group_list

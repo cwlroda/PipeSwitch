@@ -42,7 +42,7 @@ class RedisServer(ABC, Thread):
         _client_id (`str`, optional): ID of the client.
     """
 
-    @timer(Timers.PERF_COUNTER)
+    @timer(Timers.THREAD_TIMER)
     def __init__(
         self,
         host: str,
@@ -91,7 +91,7 @@ class RedisServer(ABC, Thread):
     def publish(self, msg: OrderedDict[str, Any]) -> None:
         if self.pub_stream == "":
             return
-        logger.spam(
+        logger.debug(
             f"{self._server_name}: Publishing msg to stream"
             f" {self.pub_stream}\n{pformat(object=msg, indent=1, width=1)}"
         )
@@ -104,9 +104,9 @@ class RedisServer(ABC, Thread):
         logger.debug(f"{self._server_name}: Deleting stream: {self.sub_stream}")
         self._redis.delete(self.sub_stream)
 
-    @timer(Timers.PERF_COUNTER)
+    @timer(Timers.THREAD_TIMER)
     def _process_msg(self, msg: List[Any]) -> None:
-        logger.spam(
+        logger.debug(
             f"{self._server_name}: Message"
             f" received:\n{pformat(object=msg, indent=1, width=1)}"
         )

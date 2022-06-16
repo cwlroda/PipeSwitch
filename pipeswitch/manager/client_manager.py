@@ -21,11 +21,9 @@ from pipeswitch.profiling.timer import timer
 
 
 class ClientManager(Process):
-    @timer(Timers.PERF_COUNTER)
+    @timer(Timers.THREAD_TIMER)
     def __init__(
         self,
-        # clients: OrderedDict[str, RedisServer],
-        # conn_queue: Queue,
         requests_queue: Queue,
         results_queue: Queue,
         client_blacklist: OrderedDict[str, int],
@@ -58,7 +56,7 @@ class ClientManager(Process):
             conn: OrderedDict[str, Any] = self._conn_queue.get()
             self._manage_connections(conn)
 
-    @timer(Timers.PERF_COUNTER)
+    @timer(Timers.THREAD_TIMER)
     def _manage_connections(self, conn: OrderedDict[str, Any]) -> None:
         if conn["request"] == ConnectionRequest.CONNECT.value:
             logger.info(
@@ -98,7 +96,7 @@ class ClientManager(Process):
                 f" client {conn['client_id']}"
             )
 
-    @timer(Timers.PERF_COUNTER)
+    @timer(Timers.THREAD_TIMER)
     def _connect(self, conn: OrderedDict[str, Any]) -> None:
         if len(self._clients) < self._max_clients:
             if conn["client_id"] in self._client_blacklist.keys():
@@ -131,7 +129,7 @@ class ClientManager(Process):
         self._conn_server.publish(resp)
         return ok
 
-    @timer(Timers.PERF_COUNTER)
+    @timer(Timers.THREAD_TIMER)
     def _disconnect(self, conn: OrderedDict[str, Any]) -> None:
         self._clients[conn["client_id"]].delete_streams()
         self._client_blacklist[conn["client_id"]] = 1
@@ -150,7 +148,7 @@ class ClientManager(Process):
             result: OrderedDict[str, Any] = self._results_queue.get()
             self._check_result(result)
 
-    @timer(Timers.PERF_COUNTER)
+    @timer(Timers.THREAD_TIMER)
     def _check_result(self, result: OrderedDict[str, Any]) -> None:
         if result["client_id"] not in self._client_blacklist.keys():
             if result["status"] == State.SUCCESS:
@@ -177,6 +175,7 @@ class ClientManager(Process):
         if hasattr(self, "_conn_server"):
             return self._conn_server.ready
 
+    @timer(Timers.THREAD_TIMER)
     def shutdown(self):
         """Shutdown the runner."""
         logger.debug(f"{self._name}: stopping...")
