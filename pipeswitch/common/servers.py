@@ -8,7 +8,7 @@ Todo:
     * None
 """
 
-from threading import Thread
+from threading import Event, Thread
 from abc import ABC, abstractmethod
 from torch.multiprocessing import Queue
 from typing import Any, List, OrderedDict, Tuple
@@ -52,7 +52,7 @@ class RedisServer(ABC, Thread):
     ) -> None:
         super().__init__()
         self._ready: bool = False
-        self._do_run: bool = True
+        self._stop: Event = Event()
         self._host: str = host
         self._port: int = port
         self._client_id: str = client_id
@@ -69,27 +69,23 @@ class RedisServer(ABC, Thread):
         self._msg_limit: int = 10
 
     def run(self) -> None:
-        try:
-            if self._redis.ping():
-                self._ready = True
-                logger.info(
-                    f"{self._server_name}: Listening to stream"
-                    f" {self.sub_stream}"
-                )
-            else:
-                logger.error(f"{self._server_name}: connection failed!")
-            while self._do_run:
-                msg: Tuple[str, OrderedDict[str, Any]] = self._redis.xread(
-                    streams={
-                        self.sub_stream: self._msg_id if self._msg_id else "$"
-                    },
-                    count=None,
-                    block=0,
-                )
-                if msg is not None:
-                    self._process_msg(msg)
-        except KeyboardInterrupt:
-            return
+        if self._redis.ping():
+            self._ready = True
+            logger.info(
+                f"{self._server_name}: Listening to stream {self.sub_stream}"
+            )
+        else:
+            logger.error(f"{self._server_name}: connection failed!")
+        while not self._stop.is_set():
+            msg: Tuple[str, OrderedDict[str, Any]] = self._redis.xread(
+                streams={
+                    self.sub_stream: self._msg_id if self._msg_id else "$"
+                },
+                count=None,
+                block=0,
+            )
+            if msg is not None:
+                self._process_msg(msg)
 
     @timer(Timers.PERF_COUNTER)
     def publish(self, msg: OrderedDict[str, Any]) -> None:
@@ -126,6 +122,10 @@ class RedisServer(ABC, Thread):
             )
             self._redis.xtrim(name=self.sub_stream, minid=self._msg_id)
             self._msg_count = 0
+
+    def shutdown(self) -> None:
+        self._stop.set()
+        self.delete_streams()
 
     @property
     def _server_name(self) -> str:

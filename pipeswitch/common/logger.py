@@ -7,22 +7,6 @@ import verboselogs
 from pipeswitch.common.consts import DEBUG_LOG_FILE, TIMING_LOG_FILE
 
 
-class DebugFormatter(logging.Formatter):
-    """Logging colored formatter"""
-
-    def __init__(self):
-        super().__init__()
-        self._formats = {
-            logging.VERBOSE: "[%(asctime)s,%(msecs)010.6f]\t%(message)s",
-        }
-
-    def format(self, record):
-        log_fmt = self._formats.get(record.levelno)
-        date_fmt = "%Y-%m-%d %H:%M:%S"
-        formatter = logging.Formatter(fmt=log_fmt, datefmt=date_fmt)
-        return formatter.format(record)
-
-
 class TimingFileHandler(logging.FileHandler):
     def __init__(self, filename, mode="a", encoding=None, delay=False):
         super().__init__(filename, mode, encoding, delay)
@@ -75,13 +59,13 @@ class Formatter(logging.Formatter):
                 f"{Fore.WHITE + Style.DIM} [%(asctime)s,%(msecs)010.6f"
                 f" {Style.RESET_ALL}{Fore.CYAN} %(levelname)s"
                 " %(filename)s:%(lineno)d %(funcName)s]"
-                f" {Fore.MAGENTA + Style.BRIGHT} %(message)s{Style.RESET_ALL}"
+                f" {Fore.MAGENTA} %(message)s{Style.RESET_ALL}"
             ),
             logging.WARNING: (
                 f"{Fore.WHITE + Style.DIM} [%(asctime)s,%(msecs)010.6f"
                 f" {Style.RESET_ALL}{Fore.YELLOW} %(levelname)s"
                 " %(filename)s:%(lineno)d %(funcName)s]"
-                f" {Fore.MAGENTA + Style.BRIGHT} %(message)s{Style.RESET_ALL}"
+                f" {Fore.YELLOW + Style.BRIGHT} %(message)s{Style.RESET_ALL}"
             ),
             logging.SUCCESS: (
                 f"{Fore.WHITE + Style.DIM} [%(asctime)s,%(msecs)010.6f"
@@ -111,6 +95,7 @@ class Formatter(logging.Formatter):
 
 
 verboselogs.install()
+logging.captureWarnings(True)
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.SPAM)
 
@@ -122,8 +107,8 @@ if not os.path.exists(DEBUG_LOG_FILE):
     os.makedirs(os.path.dirname(DEBUG_LOG_FILE), exist_ok=True)
 
 DEBUG_FORMAT = (
-    "[%(asctime)s,%(msecs)010.6f %(filename)s:%(lineno)d %(funcName)s]"
-    " %(message)s"
+    "[%(asctime)s,%(msecs)010.6f %(levelname)s %(filename)s:%(lineno)d"
+    " %(funcName)s] %(message)s"
 )
 debug_formatter = logging.Formatter(fmt=DEBUG_FORMAT)
 debug_handler = logging.FileHandler(DEBUG_LOG_FILE)
@@ -140,3 +125,7 @@ timing_handler.setFormatter(TimingFormatter())
 logger.addHandler(stdout_handler)
 logger.addHandler(debug_handler)
 logger.addHandler(timing_handler)
+
+warnings_logger = logging.getLogger("py.warnings")
+warnings_logger.addHandler(stdout_handler)
+warnings_logger.addHandler(debug_handler)

@@ -102,8 +102,8 @@ def launch():
         logger.error(err)
     except ConnectionResetError as err:
         logger.error(err)
-    except KeyboardInterrupt as err:
-        logger.error(err)
+    except KeyboardInterrupt:
+        pass
     except Exception as err:  # pylint: disable=broad-except
         logger.error(err)
     finally:

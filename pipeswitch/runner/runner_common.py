@@ -14,11 +14,8 @@ class ModelSummary:
         self.param_trans_pipe = param_trans_pipe
 
     @timer(Timers.PERF_COUNTER)
-    def execute(self, data_b):
-        if data_b is None:
-            return self.func(self.device, self.model, self.data_loader)
-        else:
-            return self.func(self.device, self.model, data_b)
+    def execute(self, data):
+        return self.func(self.model, data)
 
     def reset_initialized(self, mod):
         if hasattr(mod, "initialized"):
@@ -67,9 +64,9 @@ class ModelSummary:
             self.model,
             self.func,
             self.shape_summary_list,
-        ) = self.model_class.import_task()
+        ) = self.model_class().import_task(self.device)
 
-        self.data_loader = self.model_class.import_data_loader()
+        # self.data_loader = self.model_class().import_data_loader()
 
         # Eliminate parameters and buffers
         self.reset_initialized(self.model)
@@ -112,3 +109,6 @@ class ModelSummary:
                         mod._buffers[key] = torch.empty(
                             shape, device=f"cuda:{self.device}"
                         )
+
+    def load_data(self, task_key):
+        return self.model_class().import_data(task_key)

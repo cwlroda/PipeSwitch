@@ -15,8 +15,9 @@ class ResNet152(object):
         self.func = None
         self.shape_list = None
 
-    def import_data(self, batch_size):
+    def import_data(self, task_key):
         filename = "dog.jpg"
+        batch_size = 8
 
         # Download an example image from the pytorch website
         if not os.path.isfile(filename):
@@ -25,7 +26,7 @@ class ResNet152(object):
             url = "https://github.com/pytorch/hub/raw/master/images/dog.jpg"
             try:
                 urllib.URLopener().retrieve(url, filename)
-            except:
+            except Exception:  # pylint: disable=broad-except
                 urllib.request.urlretrieve(url, filename)
 
         # sample execution (requires torchvision)
@@ -49,8 +50,7 @@ class ResNet152(object):
         )  # create a mini-batch as expected by the model
 
         images = torch.cat([image] * batch_size)
-        target = torch.tensor([0] * batch_size)
-        return images, target
+        return images
 
     @timer(Timers.PERF_COUNTER)
     def import_model(self):

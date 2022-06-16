@@ -10,7 +10,10 @@ import torch.nn as nn
 import detectron2.utils.comm as comm
 from detectron2.checkpoint import DetectionCheckpointer
 from few_shot_detection.fsdet.config import get_cfg, set_global_cfg
-from few_shot_detection.fsdet.engine import default_argument_parser, default_setup
+from few_shot_detection.fsdet.engine import (
+    default_argument_parser,
+    default_setup,
+)
 from few_shot_detection.fsdet.evaluation import verify_results
 from few_shot_detection.tools.ckpt_surgery import ckpt_surgery, combine_ckpts
 from few_shot_detection.tools.train_net import Trainer
@@ -44,17 +47,21 @@ def get_parser():
         default="",
         help="Path to the secondary checkpoint (for combining)",
     )
-    parser.add_argument("--save-dir", type=str, default="", help="Save directory")
+    parser.add_argument(
+        "--save-dir", type=str, default="", help="Save directory"
+    )
     # Surgery method
     parser.add_argument(
         "--method",
         choices=["combine", "remove", "randinit"],
         required=True,
-        help="Surgery method. combine = "
-        "combine checkpoints. remove = for fine-tuning on "
-        "novel dataset, remove the final layer of the "
-        "base detector. randinit = randomly initialize "
-        "novel weights.",
+        help=(
+            "Surgery method. combine = "
+            "combine checkpoints. remove = for fine-tuning on "
+            "novel dataset, remove the final layer of the "
+            "base detector. randinit = randomly initialize "
+            "novel weights."
+        ),
     )
     # Targets
     parser.add_argument(
@@ -86,7 +93,7 @@ def import_data_loader():
 
 def import_model():
     model = fsdet.import_model()
-    model.model.train()
+    model.train()
     return model
 
 
@@ -100,7 +107,7 @@ def import_func():
                 "--method",
                 "randinit",
                 "--save-dir",
-                "checkpoints/coco/faster_rcnn/faster_rcnn_R_101_FPN_all" "--coco",
+                "checkpoints/coco/faster_rcnn/faster_rcnn_R_101_FPN_all--coco",
             ]
         )
 
@@ -164,7 +171,9 @@ def import_func():
                 1218, 1224, 1225, 1227
             ]
             # fmt: on
-            args.BASE_CLASSES = [c for c in range(1230) if c not in args.NOVEL_CLASSES]
+            args.BASE_CLASSES = [
+                c for c in range(1230) if c not in args.NOVEL_CLASSES
+            ]
             args.ALL_CLASSES = sorted(args.BASE_CLASSES + args.NOVEL_CLASSES)
             args.IDMAP = {v: i for i, v in enumerate(args.ALL_CLASSES)}
             args.TAR_SIZE = 1230
@@ -194,9 +203,9 @@ def import_func():
 
         if args.eval_only:
             model = Trainer.build_model(cfg)
-            DetectionCheckpointer(model, save_dir=cfg.OUTPUT_DIR).resume_or_load(
-                cfg.MODEL.WEIGHTS, resume=args.resume
-            )
+            DetectionCheckpointer(
+                model, save_dir=cfg.OUTPUT_DIR
+            ).resume_or_load(cfg.MODEL.WEIGHTS, resume=args.resume)
             res = Trainer.test(cfg, model)
             if comm.is_main_process():
                 verify_results(cfg, res)

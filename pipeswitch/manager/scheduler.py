@@ -2,6 +2,7 @@ from time import sleep
 from abc import ABC, abstractmethod
 from typing import List, OrderedDict, Tuple  # pylint: disable=unused-import
 from torch.multiprocessing import (  # pylint: disable=unused-import
+    Event,
     Process,
     Queue,
 )
@@ -36,7 +37,7 @@ class Scheduler(Process):
     ) -> None:
         super().__init__()
         self._name: str = self.__class__.__name__
-        self._do_run: bool = True
+        self._stop: Event = Event()
         self._policy: Policy = RoundRobinPolicy()
         self._runner_idx: List[int] = num_runners
         self._runner_status: OrderedDict[int, State] = runner_status
@@ -45,13 +46,10 @@ class Scheduler(Process):
         )
 
     def run(self) -> None:
-        try:
-            while self._do_run:
-                runner_id, status = self._runner_status_queue.get()
-                logger.debug(f"{self._name}: Runner {runner_id} {status}")
-                self._runner_status[runner_id] = status
-        except KeyboardInterrupt:
-            return
+        while not self._stop.is_set():
+            runner_id, status = self._runner_status_queue.get()
+            logger.debug(f"{self._name}: Runner {runner_id} {status}")
+            self._runner_status[runner_id] = status
 
     @timer(Timers.PROCESS_TIMER)
     def schedule(self) -> int:
@@ -73,6 +71,12 @@ class Scheduler(Process):
             for runner_id, status in self.runner_status.items()
             if status == State.IDLE
         ]
+
+    def shutdown(self):
+        """Shutdown the runner."""
+        logger.debug(f"{self._name}: stopping...")
+        self._stop.set()
+        logger.debug(f"{self._name}: stopped!")
 
     @property
     def runner_idx(self) -> List[int]:

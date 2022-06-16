@@ -1,49 +1,54 @@
 import threading
 import time
 
-import numpy
-import task.common as util
-import task.fsdet as fsdet
+from pipeswitch.common.consts import Timers
+from pipeswitch.common.logger import logger
+from pipeswitch.profiling.timer import timer
+import pipeswitch.task.common as util
+from pipeswitch.task.fsdet import FSDET
+
 
 TASK_NAME = "fsdet_inference"
 
 
-class FSDETInference(object):
-    def import_data_loader(self):
-        return None
+class FSDETInference:
+    def __init__(self) -> None:
+        self.fsdet = FSDET()
 
-    def import_model(self):
-        model = fsdet.import_model()
+    def import_data(self, task_key):
+        data = self.fsdet.import_data(task_key)
+        return data
+
+    def import_model(self, device=None):
+        model = self.fsdet.import_model(device)
         return model
 
     def import_func(self):
-        def inference(model, data_b):
-            print(
-                threading.current_thread().name,
-                "fsdet inference >>>>>>>>>>",
-                time.time(),
-                "model status",
-                model.model.training,
+        def inference(model, data):
+            logger.debug(
+                f"{threading.current_thread().name} fsdet inference >>>>>>>>>>"
+                f" {time.time()} model status {model.training}"
             )
-            with util.timer("fsdet inference func"):
-                data = numpy.ndarray((1213, 1546, 3), numpy.uint8, data_b)
-                print("loaded data")
-                output = model(data)
-                print("inference done")
-                return output
+            output = self.fsdet(data)
+            return output
 
         return inference
 
-    def import_task(self):
-        model = self.import_model()
+    @timer(Timers.PERF_COUNTER)
+    def import_task(self, device):
+        model = self.import_model(device)
         func = self.import_func()
-        group_list = fsdet.partition_model(model.model)
+        group_list = self.fsdet.partition_model(model)
         shape_list = [util.group_to_shape(group) for group in group_list]
         return model, func, shape_list
 
+    @timer(Timers.PERF_COUNTER)
     def import_parameters(self):
         model = self.import_model()
-        group_list = fsdet.partition_model(model.model)
+        group_list = self.fsdet.partition_model(model)
         # print(group_list)
         batch_list = [util.group_to_batch(group) for group in group_list]
         return batch_list
+
+
+MODEL_CLASS = FSDETInference

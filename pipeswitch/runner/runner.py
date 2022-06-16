@@ -15,13 +15,14 @@ from typing import (  # pylint: disable=unused-import
     Tuple,
 )
 from torch.multiprocessing import (  # pylint: disable=unused-import
+    Event,
     Pipe,
     Process,
     Queue,
 )
 import torch
 from redis import Redis, exceptions
-import json
+import jsonpickle
 from urllib import request
 from PIL import Image
 from pprint import pformat
@@ -80,7 +81,7 @@ class Runner(Process):
     ) -> None:
         super().__init__()
         self._name = self.__class__.__name__
-        self._do_run: bool = True
+        self._stop: Event = Event()
         self._mode: str = mode
         self._device: int = device
         self._status: State = State.STARTUP
@@ -101,39 +102,36 @@ class Runner(Process):
             `TypeError`: If the message received is not a JSON string.
         """
         logger.debug(f"{self._name} {self._device}: start")
-        try:
-            self._data_loader = Redis(
-                host=REDIS_HOST,
-                port=REDIS_PORT,
-                encoding="utf-8",
-                decode_responses=True,
-            )
-            if self._mode == "gpu":
-                torch.cuda.recv_cache(device=self._device)
-                logger.debug(f"{self._name} {self._device}: share GPU memory")
-                load_jobs = []
-                for model_name, model_class in self._model_classes.items():
-                    model_summary: ModelSummary = ModelSummary(
-                        mode=self._mode,
-                        device=self._device,
-                        model_name=model_name,
-                        model_class=model_class,
-                        param_trans_pipe=self._model_out,
-                    )
-                    load_model = Thread(target=model_summary.load_model)
-                    load_model.daemon = True
-                    load_model.start()
-                    load_model.join()
-                    load_jobs.append(load_model)
-                    self._models[model_name] = model_summary
+        self._data_loader = Redis(
+            host=REDIS_HOST,
+            port=REDIS_PORT,
+            encoding="utf-8",
+            decode_responses=True,
+        )
+        if self._mode == "gpu":
+            torch.cuda.recv_cache(device=self._device)
+            logger.debug(f"{self._name} {self._device}: share GPU memory")
+            self._load_jobs = []
+            for model_name, model_class in self._model_classes.items():
+                model_summary: ModelSummary = ModelSummary(
+                    mode=self._mode,
+                    device=self._device,
+                    model_name=model_name,
+                    model_class=model_class,
+                    param_trans_pipe=self._model_out,
+                )
+                load_model = Thread(target=model_summary.load_model)
+                load_model.daemon = True
+                load_model.start()
+                load_model.join()
+                self._load_jobs.append(load_model)
+                self._models[model_name] = model_summary
 
-            logger.debug(f"{self._name} {self._device}: import models")
-            self._update_status(State.IDLE)
-            while self._do_run:
-                task: OrderedDict[str, Any] = self._task_out.recv()
-                self._manage_task(task)
-        except KeyboardInterrupt:
-            return
+        logger.debug(f"{self._name} {self._device}: import models")
+        self._update_status(State.IDLE)
+        while not self._stop.is_set():
+            task: OrderedDict[str, Any] = self._task_out.recv()
+            self._manage_task(task)
 
     @timer(Timers.PERF_COUNTER)
     def _update_status(self, status: State) -> None:
@@ -152,7 +150,7 @@ class Runner(Process):
     @timer(Timers.PERF_COUNTER)
     def _manage_task(self, task: OrderedDict[str, Any]) -> None:
         try:
-            logger.info(
+            logger.debug(
                 f"{self._name} {self._device}: received task"
                 f" {task['model_name']} {task['task_type']} with id"
                 f" {task['task_id']} from client {task['client_id']}"
@@ -171,7 +169,7 @@ class Runner(Process):
                 "task_id": task["task_id"],
                 "model_name": task["model_name"],
                 "status": State.SUCCESS,
-                "output": output,
+                "output": jsonpickle.encode(output),
             }
             self._results_queue.put(msg)
             logger.debug(
@@ -204,7 +202,13 @@ class Runner(Process):
         """Executes a task."""
         # TODO: run inference on a proper model
         # data = self._load_data(task)
-        data = self._load_data()
+        # data = self._load_data()
+        data = model_summary.load_data(task["task_key"])
+        logger.debug(
+            f"{self._name} {self._device}: retrieved data for task"
+            f" {task['model_name']} {task['task_type']} with id"
+            f" {task['task_id']} from client {task['client_id']}"
+        )
         logger.spam(
             f"{self._name} {self._device} data:"
             f" \n{pformat(object=data, indent=1, width=1)}"
@@ -266,41 +270,50 @@ class Runner(Process):
     #     except KeyboardInterrupt as kb_err:
     #         raise KeyboardInterrupt from kb_err
 
-    @timer(Timers.PERF_COUNTER)
-    def _load_data(self):
-        filename = "dog.jpg"
+    # @timer(Timers.PERF_COUNTER)
+    # def _load_data(self):
+    #     filename = "dog.jpg"
 
-        # Download an example image from the pytorch website
-        if not os.path.isfile(filename):
-            import urllib
+    #     # Download an example image from the pytorch website
+    #     if not os.path.isfile(filename):
+    #         import urllib
 
-            url = "https://github.com/pytorch/hub/raw/master/images/dog.jpg"
-            try:
-                urllib.URLopener().retrieve(url, filename)
-            except:
-                urllib.request.urlretrieve(url, filename)
+    #         url = "https://github.com/pytorch/hub/raw/master/images/dog.jpg"
+    #         try:
+    #             urllib.URLopener().retrieve(url, filename)
+    #         except:
+    #             urllib.request.urlretrieve(url, filename)
 
-        # sample execution (requires torchvision)
-        from torchvision import transforms
+    #     # sample execution (requires torchvision)
+    #     from torchvision import transforms
 
-        input_image = Image.open(filename)
-        preprocess = transforms.Compose(
-            [
-                transforms.Resize(256),
-                transforms.CenterCrop(224),
-                transforms.ToTensor(),
-                transforms.Normalize(
-                    mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
-                ),
-            ]
-        )
-        input_tensor = preprocess(input_image)
-        image = input_tensor.unsqueeze(
-            0
-        )  # create a mini-batch as expected by the model
+    #     input_image = Image.open(filename)
+    #     preprocess = transforms.Compose(
+    #         [
+    #             transforms.Resize(256),
+    #             transforms.CenterCrop(224),
+    #             transforms.ToTensor(),
+    #             transforms.Normalize(
+    #                 mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
+    #             ),
+    #         ]
+    #     )
+    #     input_tensor = preprocess(input_image)
+    #     image = input_tensor.unsqueeze(
+    #         0
+    #     )  # create a mini-batch as expected by the model
 
-        images = torch.cat([image] * 8)
-        return images
+    #     images = torch.cat([image] * 8)
+    #     return images
+
+    def shutdown(self):
+        """Shutdown the runner."""
+        logger.debug(f"{self._name} {self._device}: stopping...")
+        self._stop.set()
+        if hasattr(self, "_load_jobs"):
+            for load_job in self._load_jobs:
+                load_job.terminate()
+        logger.debug(f"{self._name} {self._device}: stopped!")
 
     @property
     def model_in(self):

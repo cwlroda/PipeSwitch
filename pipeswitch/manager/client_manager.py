@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 from threading import Thread
 from typing import Any, OrderedDict
-from torch.multiprocessing import Process, Queue
+from torch.multiprocessing import Event, Process, Queue
 
 from pipeswitch.common.consts import (
     ConnectionRequest,
@@ -32,7 +32,7 @@ class ClientManager(Process):
     ) -> None:
         super().__init__()
         self._name: str = self.__class__.__name__
-        self._do_run: bool = True
+        self._stop: Event = Event()
         self._max_clients: int = 10
         self._clients: OrderedDict[str, RedisServer] = OrderedDict()
         self._conn_queue: "Queue[OrderedDict[str, Any]]" = Queue()
@@ -43,30 +43,28 @@ class ClientManager(Process):
         self._client_blacklist: OrderedDict[str] = client_blacklist
 
     def run(self) -> None:
-        try:
-            self.conn_server: RedisServer = ManagerClientConnectionServer(
-                host=REDIS_HOST,
-                port=REDIS_PORT,
-                sub_queue=self._conn_queue,
-            )
-            self.conn_server.daemon = True
-            self.conn_server.start()
-            check_results = Thread(target=self._check_results)
-            check_results.daemon = True
-            check_results.start()
-            while self._do_run:
-                conn: OrderedDict[str, Any] = self._conn_queue.get()
-                self._manage_connections(conn)
-        except KeyboardInterrupt:
-            return
+        logger.debug(f"{self._name}: Start")
+        self._conn_server: RedisServer = ManagerClientConnectionServer(
+            host=REDIS_HOST,
+            port=REDIS_PORT,
+            sub_queue=self._conn_queue,
+        )
+        self._conn_server.daemon = True
+        self._conn_server.start()
+        self._results_checker = Thread(target=self._check_results)
+        self._results_checker.daemon = True
+        self._results_checker.start()
+        while not self._stop.is_set():
+            conn: OrderedDict[str, Any] = self._conn_queue.get()
+            self._manage_connections(conn)
 
     @timer(Timers.PERF_COUNTER)
     def _manage_connections(self, conn: OrderedDict[str, Any]) -> None:
-        logger.info(
-            f"{self._name}: Received connection request from"
-            f" client {conn['client_id']}"
-        )
         if conn["request"] == ConnectionRequest.CONNECT.value:
+            logger.info(
+                f"{self._name}: Received connection request from"
+                f" client {conn['client_id']}"
+            )
             resp = self._connect(conn)
             if resp:
                 logger.debug(
@@ -79,6 +77,10 @@ class ClientManager(Process):
                     f" {conn['client_id']} rejected"
                 )
         elif conn["request"] == ConnectionRequest.DISCONNECT.value:
+            logger.info(
+                f"{self._name}: Received disconnection request from"
+                f" client {conn['client_id']}"
+            )
             resp = self._disconnect(conn)
             if resp:
                 logger.debug(
@@ -126,25 +128,25 @@ class ClientManager(Process):
                 "err_msg": "Max clients reached",
             }
             ok = False
-        self.conn_server.publish(resp)
+        self._conn_server.publish(resp)
         return ok
 
     @timer(Timers.PERF_COUNTER)
     def _disconnect(self, conn: OrderedDict[str, Any]) -> None:
         self._clients[conn["client_id"]].delete_streams()
         self._client_blacklist[conn["client_id"]] = 1
-        logger.info(f"{self._name}: Blacklisted client {conn['client_id']}")
+        logger.info(f"{self._name}: Disconnected client {conn['client_id']}")
         self._clients.pop(conn["client_id"])
         resp = {
             "client_id": conn["client_id"],
             "status": ResponseStatus.OK.value,
         }
         ok = True
-        self.conn_server.publish(resp)
+        self._conn_server.publish(resp)
         return ok
 
     def _check_results(self) -> None:
-        while self._do_run:
+        while self._stop:
             result: OrderedDict[str, Any] = self._results_queue.get()
             self._check_result(result)
 
@@ -172,5 +174,19 @@ class ClientManager(Process):
             )
 
     def ready(self) -> bool:
-        if hasattr(self, "conn_server"):
-            return self.conn_server.ready
+        if hasattr(self, "_conn_server"):
+            return self._conn_server.ready
+
+    def shutdown(self):
+        """Shutdown the runner."""
+        logger.debug(f"{self._name}: stopping...")
+        self._stop.set()
+        if hasattr(self, "_results_checker"):
+            self._results_checker.terminate()
+        for client_server in self._clients.values():
+            client_server.shutdown()
+            client_server.terminate()
+        if hasattr(self, "_conn_server"):
+            self._conn_server.shutdown()
+            self._conn_server.terminate()
+        logger.debug(f"{self._name}: stopped!")

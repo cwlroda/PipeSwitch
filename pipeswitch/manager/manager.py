@@ -144,13 +144,16 @@ class PipeSwitchManager(Thread):
     def shutdown(self) -> None:
         logger.warning(f"{self._name}: Shutting down")
         if hasattr(self, "_client_manager"):
+            self._client_manager.shutdown()
             self._client_manager.terminate()
             logger.warning(f"{self._name}: Terminated client manager")
         if hasattr(self, "_scheduler"):
-            self.scheduler.terminate()
+            self._scheduler.shutdown()
+            self._scheduler.terminate()
             logger.warning(f"{self._name}: Terminated scheduler")
         if hasattr(self, "_runners"):
             for runner in self._runners.values():
+                runner.shutdown()
                 runner.terminate()
             logger.warning(f"{self._name}: Terminated runners")
         self.do_run = False
@@ -158,7 +161,7 @@ class PipeSwitchManager(Thread):
             self._gra.release_gpus()
         logger.info(f"{self._name}: Successfully shut down")
 
-    @timer(Timers.PROCESS_TIMER)
+    @timer(Timers.PERF_COUNTER)
     def _setup(self) -> None:
         """Run setup tasks in the manager."""
         logger.debug(f"{self._name}: Start")
@@ -171,13 +174,13 @@ class PipeSwitchManager(Thread):
         else:
             self.allocated_gpus = [*range(self._num_gpus)]
         self._load_models()
-        self.scheduler: Scheduler = Scheduler(
+        self._scheduler: Scheduler = Scheduler(
             num_runners=self.allocated_gpus,
             runner_status=self._runner_status,
             runner_status_queue=self._runner_status_queue,
         )
-        self.scheduler.daemon = True
-        self.scheduler.start()
+        self._scheduler.daemon = True
+        self._scheduler.start()
         self._create_runners()
 
     @timer(Timers.PERF_COUNTER)
@@ -205,7 +208,7 @@ class PipeSwitchManager(Thread):
             model_module = importlib.import_module(
                 "pipeswitch.task." + model_name
             )
-            model_class: object = model_module.MODEL_CLASS()
+            model_class: object = model_module.MODEL_CLASS
             self._model_classes[model_name] = model_class
         self.load_models = [
             Thread(
@@ -220,6 +223,7 @@ class PipeSwitchManager(Thread):
         for load_model in self.load_models:
             load_model.daemon = True
             load_model.start()
+            load_model.join()
 
     @timer(Timers.THREAD_TIMER)
     def _load_model(self, model_name, model_class) -> None:
@@ -227,7 +231,9 @@ class PipeSwitchManager(Thread):
             # Import parameters
             logger.debug(f"{self._name}: Loading model {model_name}")
             logger.debug(f"{self._name}: Importing {model_name} parameters")
-            batched_parameter_list: List[Any] = model_class.import_parameters()
+            batched_parameter_list: List[
+                Any
+            ] = model_class().import_parameters()
 
             # Preprocess batches
             logger.debug(f"{self._name}: Preprocessing {model_name} parameters")
@@ -270,7 +276,7 @@ class PipeSwitchManager(Thread):
 
     @timer(Timers.PROCESS_TIMER)
     def _allocate_tasks(self, task: OrderedDict[str, Any]) -> None:
-        runner_id = self.scheduler.schedule()
+        runner_id = self._scheduler.schedule()
         runner = self._runners[runner_id]
         msg: OrderedDict[str, Any] = {
             "client_id": task["client_id"],
@@ -280,7 +286,7 @@ class PipeSwitchManager(Thread):
             "model_name": task["model_name"],
             # "model": self._models[task["model_name"]]
         }
-        logger.info(
+        logger.debug(
             f"{self._name}: Assigning task"
             f" {task['model_name']} {task['task_type']} with id"
             f" {task['task_id']} from client {task['client_id']} to"
