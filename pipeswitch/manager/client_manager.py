@@ -181,11 +181,14 @@ class ClientManager(Process):
         logger.debug(f"{self._name}: stopping...")
         self._stop.set()
         if hasattr(self, "_results_checker"):
-            self._results_checker.terminate()
+            if self._results_checker.is_alive():
+                self._results_checker.terminate()
         for client_server in self._clients.values():
-            client_server.shutdown()
-            client_server.terminate()
+            if client_server.is_alive():
+                client_server.shutdown()
+                client_server.terminate()
         if hasattr(self, "_conn_server"):
-            self._conn_server.shutdown()
-            self._conn_server.terminate()
+            if self._conn_server.is_alive():
+                self._conn_server.shutdown()
+                self._conn_server.terminate()
         logger.debug(f"{self._name}: stopped!")

@@ -19,7 +19,7 @@ Todo:
 import os
 import shutil
 from argparse import ArgumentParser
-import torch.multiprocessing as mp
+from torch.multiprocessing import set_start_method
 from redis import exceptions, Redis
 
 from pipeswitch.common.consts import (
@@ -112,5 +112,5 @@ def launch():
 
 
 if __name__ == "__main__":
-    mp.set_start_method("spawn", force=True)
+    set_start_method("spawn", force=True)
     launch()

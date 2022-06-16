@@ -144,17 +144,24 @@ class PipeSwitchManager:
     def shutdown(self) -> None:
         logger.warning(f"{self._name}: Shutting down")
         if hasattr(self, "_client_manager"):
-            self._client_manager.shutdown()
-            self._client_manager.terminate()
+            if self._client_manager.is_alive():
+                self._client_manager.shutdown()
+                self._client_manager.terminate()
             logger.warning(f"{self._name}: Terminated client manager")
         if hasattr(self, "_scheduler"):
-            self._scheduler.shutdown()
-            self._scheduler.terminate()
+            if self._scheduler.is_alive():
+                self._scheduler.shutdown()
+                self._scheduler.terminate()
             logger.warning(f"{self._name}: Terminated scheduler")
+        if hasattr(self, "_models_loader"):
+            for model_loader in self._models_loader:
+                if model_loader.is_alive():
+                    model_loader.terminate()
         if hasattr(self, "_runners"):
             for runner in self._runners.values():
-                runner.shutdown()
-                runner.terminate()
+                if runner.is_alive():
+                    runner.shutdown()
+                    runner.terminate()
             logger.warning(f"{self._name}: Terminated runners")
         self.do_run = False
         if self._mode == "gpu" and hasattr(self, "_gra"):
@@ -210,7 +217,7 @@ class PipeSwitchManager:
             )
             model_class: object = model_module.MODEL_CLASS
             self._model_classes[model_name] = model_class
-        self.load_models = [
+        self._models_loader = [
             Thread(
                 target=self._load_model,
                 args=(
@@ -220,10 +227,10 @@ class PipeSwitchManager:
             )
             for model_name, model_class in self._model_classes.items()
         ]
-        for load_model in self.load_models:
-            load_model.daemon = True
-            load_model.start()
-            load_model.join()
+        for model_loader in self._models_loader:
+            model_loader.daemon = True
+            model_loader.start()
+            model_loader.join()
 
     @timer(Timers.THREAD_TIMER)
     def _load_model(self, model_name, model_class) -> None:
