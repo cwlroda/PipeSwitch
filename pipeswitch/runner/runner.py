@@ -6,7 +6,6 @@ This module spawns workers and allocates tasks to available workers.
 Todo:
     * None
 """
-import os
 from time import sleep
 from typing import (  # pylint: disable=unused-import
     Any,
@@ -21,19 +20,11 @@ from torch.multiprocessing import (  # pylint: disable=unused-import
     Queue,
 )
 import torch
-from redis import Redis, exceptions
 import jsonpickle
-from urllib import request
-from PIL import Image
 from pprint import pformat
 from threading import Thread
 
-from pipeswitch.common.consts import (
-    REDIS_HOST,
-    REDIS_PORT,
-    State,
-    Timers,
-)
+from pipeswitch.common.consts import State, Timers
 from pipeswitch.common.logger import logger
 from pipeswitch.profiling.timer import timer
 from pipeswitch.runner.runner_common import ModelSummary
@@ -102,12 +93,6 @@ class Runner(Process):
             `TypeError`: If the message received is not a JSON string.
         """
         logger.debug(f"{self._name} {self._device}: start")
-        self._data_loader = Redis(
-            host=REDIS_HOST,
-            port=REDIS_PORT,
-            encoding="utf-8",
-            decode_responses=True,
-        )
         if self._mode == "gpu":
             torch.cuda.recv_cache(device=self._device)
             logger.debug(f"{self._name} {self._device}: share GPU memory")
@@ -200,9 +185,6 @@ class Runner(Process):
         self, task: OrderedDict[str, Any], model_summary: ModelSummary
     ) -> Any:
         """Executes a task."""
-        # TODO: run inference on a proper model
-        # data = self._load_data(task)
-        # data = self._load_data()
         data = model_summary.load_data(task["task_key"])
         logger.debug(
             f"{self._name} {self._device}: retrieved data for task"
@@ -228,83 +210,6 @@ class Runner(Process):
             output = "some random data"
             sleep(5)
         return output
-
-    # @timer(Timers.PERF_COUNTER)
-    # def _load_data(self, task: str) -> Image:
-    #     """Loads data from redis store"""
-    #     try:
-    #         while not self._data_loader.ping():
-    #             logger.error(
-    #                 f"{self._name} {self._device} data loader: connection"
-    #                 " failed!"
-    #             )
-    #             logger.error(
-    #                 f"{self._name} {self._device} data loader: reconnecting in"
-    #                 " 5s..."
-    #             )
-    #             sleep(5)
-    #         data_str = self._data_loader.get(task["task_key"])
-    #         data = json.loads(data_str)
-    #         logger.debug(
-    #             f"{self._name} {self._device}: retrieved data for task"
-    #             f" {task['model_name']} {task['task_type']} with id"
-    #             f" {task['task_id']} from client {task['client_id']}"
-    #         )
-    #         logger.spam(f"\n{pformat(object=data, indent=1, width=1)}")
-    #         img_url = data["task"]["items"][0]["urls"]["-1"]
-    #         img_name = img_url.split("/")[-1]
-    #         if not os.path.exists(img_name):
-    #             logger.debug(
-    #                 f"{self._name} {self._device}: Downloading image"
-    #                 f" {img_name}..."
-    #             )
-    #             request.urlretrieve(img_url, img_name)
-    #         img = Image.open(img_name)
-    #         return img
-    #     except exceptions.ConnectionError as conn_err:
-    #         logger.error(conn_err)
-    #         raise exceptions.ConnectionError from conn_err
-    #     except exceptions.RedisError as redis_err:
-    #         logger.error(redis_err)
-    #         raise exceptions.RedisError from redis_err
-    #     except KeyboardInterrupt as kb_err:
-    #         raise KeyboardInterrupt from kb_err
-
-    # @timer(Timers.PERF_COUNTER)
-    # def _load_data(self):
-    #     filename = "dog.jpg"
-
-    #     # Download an example image from the pytorch website
-    #     if not os.path.isfile(filename):
-    #         import urllib
-
-    #         url = "https://github.com/pytorch/hub/raw/master/images/dog.jpg"
-    #         try:
-    #             urllib.URLopener().retrieve(url, filename)
-    #         except:
-    #             urllib.request.urlretrieve(url, filename)
-
-    #     # sample execution (requires torchvision)
-    #     from torchvision import transforms
-
-    #     input_image = Image.open(filename)
-    #     preprocess = transforms.Compose(
-    #         [
-    #             transforms.Resize(256),
-    #             transforms.CenterCrop(224),
-    #             transforms.ToTensor(),
-    #             transforms.Normalize(
-    #                 mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
-    #             ),
-    #         ]
-    #     )
-    #     input_tensor = preprocess(input_image)
-    #     image = input_tensor.unsqueeze(
-    #         0
-    #     )  # create a mini-batch as expected by the model
-
-    #     images = torch.cat([image] * 8)
-    #     return images
 
     def shutdown(self):
         """Shutdown the runner."""
