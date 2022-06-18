@@ -27,7 +27,7 @@ def get_parser() -> ArgumentParser:
     parser = ArgumentParser(description="FsDet demo for builtin models")
 
     parser.add_argument(
-        "--model_name",
+        "--model",
         type=str,
         default="resnet152",
         help="Name of model for processing requests. Default is 'resnet152'.",
@@ -52,7 +52,8 @@ class Client:
     def __init__(self, model_name, batch_size, num_it) -> None:
         super().__init__()
         self._name: str = self.__class__.__name__
-        self._client_id: str = str(uuid4())
+        # self._client_id: str = str(uuid4())
+        self._client_id: str = "scalabel"
         self._conn_queue: "Queue[OrderedDict[str, Any]]" = Queue()
         self._conn_server: RedisServer = ClientConnectionServer(
             client_id=self._client_id,
@@ -167,7 +168,8 @@ class Client:
         for _ in range(self._num_it):
             task_id: str = str(uuid4())
             task_type: str = "inference"
-            task_key: str = "projects/image/saved/000025"
+            task_key: str = "projects/img_track/saved/000003"
+            # task_key: str = "projects/image/saved/000025"
             msg = {
                 "client_id": self._client_id,
                 "task_id": task_id,
@@ -229,7 +231,7 @@ class Client:
 
     def _timeout(self) -> None:
         start_time = time.perf_counter()
-        timeout = 30  # 10000 * self._num_it
+        timeout = 10 * self._num_it
         while True:
             if (time.perf_counter() - start_time) > timeout:
                 logger.warning(
@@ -250,7 +252,7 @@ class Client:
 
 def launch():
     args: ArgumentParser = get_parser().parse_args()
-    client = Client(args.model_name, args.batch_size, args.it)
+    client = Client(args.model, args.batch_size, args.it)
     client.run()
 
 

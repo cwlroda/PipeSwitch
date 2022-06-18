@@ -15,16 +15,13 @@ Todo:
 from time import sleep
 import os
 import importlib
-from threading import Thread
 from typing import (  # pylint: disable=unused-import
     Any,
     List,
     OrderedDict,
     Tuple,
 )
-import torch
 from torch.multiprocessing import Manager, Process, Queue
-from pprint import pformat
 
 from pipeswitch.common.consts import State, Timers
 from pipeswitch.common.exceptions import GPUError
@@ -72,14 +69,10 @@ class PipeSwitchManager:
         self._manager: Manager = Manager()
         self._runner_status: OrderedDict[int, State] = self._manager.dict()
         self._runner_status_queue: "Queue[Tuple[int, State]]" = Queue()
-        # self._clients: OrderedDict[str, RedisServer] = self._manager.dict()
-        # self._conn_queue: "Queue[OrderedDict[str, Any]]" = Queue()
         self._requests_queue: "Queue[OrderedDict[str, Any]]" = Queue()
         self._results_queue: "Queue[OrderedDict[str, Any]]" = Queue()
         self._client_blacklist: OrderedDict[str, int] = self._manager.dict()
         self._client_manager: ClientManager = ClientManager(
-            # clients=self._clients,
-            # conn_queue=self._conn_queue,
             requests_queue=self._requests_queue,
             results_queue=self._results_queue,
             client_blacklist=self._client_blacklist,
@@ -107,9 +100,7 @@ class PipeSwitchManager:
             logger.debug(
                 f"{self._name}: Waiting for at least one runner to be ready"
             )
-            while len(self._runner_status) < 1 or len(self._models) != len(
-                self._model_list
-            ):
+            while len(self._runner_status) < 1:
                 sleep(1)
             logger.success(
                 "\n******************************************\n"
@@ -209,6 +200,7 @@ class PipeSwitchManager:
                 line.strip() for line in f.readlines()
             ]
 
+    @timer(Timers.PERF_COUNTER)
     def _load_models(self) -> None:
         self._load_model_list(file_name="model_list.txt")
         for model_name in self._model_list:
@@ -217,44 +209,6 @@ class PipeSwitchManager:
             )
             model_class: object = model_module.MODEL_CLASS
             self._model_classes[model_name] = model_class
-        self._models_loader = [
-            Thread(
-                target=self._load_model,
-                args=(
-                    model_name,
-                    model_class,
-                ),
-            )
-            for model_name, model_class in self._model_classes.items()
-        ]
-        for model_loader in self._models_loader:
-            model_loader.daemon = True
-            model_loader.start()
-            model_loader.join()
-
-    @timer(Timers.THREAD_TIMER)
-    def _load_model(self, model_name, model_class) -> None:
-        try:
-            # Import parameters
-            logger.debug(f"{self._name}: Loading model {model_name}")
-            logger.debug(f"{self._name}: Importing {model_name} parameters")
-            batched_parameter_list: List[
-                Any
-            ] = model_class().import_parameters()
-
-            # Preprocess batches
-            logger.debug(f"{self._name}: Preprocessing {model_name} parameters")
-
-            self._models[model_name] = [
-                (None, mod_list)
-                if param is None
-                else (param.pin_memory(), mod_list)
-                for param, mod_list in batched_parameter_list
-            ]
-            logger.spam(f"\n{pformat(object=self._models[model_name])}")
-            logger.debug(f"{self._name}: Loaded model {model_name}")
-        except KeyboardInterrupt as kb_err:
-            raise KeyboardInterrupt from kb_err
 
     @timer(Timers.PERF_COUNTER)
     def _create_runners(self) -> None:
@@ -265,8 +219,6 @@ class PipeSwitchManager:
                 number of workers to create per runner, default 2.
         """
         for runner_id in self.allocated_gpus:
-            if self._mode == "gpu":
-                torch.cuda.set_device(device=runner_id)
             runner: Process = Runner(
                 mode=self._mode,
                 device=runner_id,
@@ -279,7 +231,6 @@ class PipeSwitchManager:
             runner.start()
             self._runners[runner_id] = runner
             logger.debug(f"{self._name}: Created runner in GPU {runner_id}")
-            # break
 
     @timer(Timers.PERF_COUNTER)
     def _allocate_task(self, task: OrderedDict[str, Any]) -> None:
@@ -291,7 +242,6 @@ class PipeSwitchManager:
             "task_type": task["task_type"],
             "task_key": task["task_key"],
             "model_name": task["model_name"],
-            # "model": self._models[task["model_name"]]
         }
         logger.debug(
             f"{self._name}: Assigning task"
@@ -300,59 +250,3 @@ class PipeSwitchManager:
             f" runner {runner_id}"
         )
         runner.task_in.send(msg)
-
-        if (
-            self._mode == "gpu"
-            and runner.curr_model != f"{task['model_name']}_{task['task_type']}"
-        ):
-            # Create CUDA stream
-            cuda_stream_for_parameter = torch.cuda.Stream(device=runner_id)
-            logger.debug(
-                f"{self._name}: create CUDA stream for runner {runner_id}"
-            )
-
-            # Allocate cache to streams
-            with torch.cuda.stream(cuda_stream_for_parameter):
-                torch.cuda.insert_cache_for_param(runner_id)
-            logger.debug(
-                f"{self._name}: insert shared cache for parameters for runner"
-                f" {runner_id}"
-            )
-
-            # Transfer parameters to GPU
-            batched_parameter_list = self._models[
-                f"{task['model_name']}_{task['task_type']}"
-            ]
-            self._transfer_parameter(
-                batched_parameter_list,
-                cuda_stream_for_parameter,
-                runner.model_in,
-            )
-            logger.debug(
-                f"{self._name}: transfer parameters to runner {runner_id}"
-            )
-
-            # Clear status
-            with torch.cuda.stream(cuda_stream_for_parameter):
-                torch.cuda.clear_cache(runner_id)
-            logger.debug(
-                f"{self._name}: clear shared cache for runner {runner_id}"
-            )
-
-    @timer(Timers.PERF_COUNTER)
-    def _transfer_parameter(
-        self,
-        batched_parameter_list,
-        cuda_stream_for_parameter,
-        param_trans_pipe,
-    ):
-        param_cuda_list = []
-        with torch.cuda.stream(cuda_stream_for_parameter):
-            for param, mod_list in batched_parameter_list:
-                if param is not None:
-                    param_cuda = param.cuda(non_blocking=True)
-                    param_cuda_list.append(param_cuda)
-                    e = torch.cuda.Event()
-                    e.record()
-                    e.synchronize()
-                param_trans_pipe.send(mod_list[0])

@@ -40,47 +40,47 @@ class Formatter(logging.Formatter):
         super().__init__()
         self._formats = {
             logging.SPAM: (
-                f"{Fore.WHITE + Style.DIM} [%(asctime)s,%(msecs)010.6f"
+                f"{Fore.WHITE + Style.DIM}[%(asctime)s,%(msecs)010.6f"
                 "  %(levelname)s %(filename)s:%(lineno)d"
                 f" %(funcName)s]  %(message)s{Style.RESET_ALL}"
             ),
             logging.DEBUG: (
-                f"{Fore.WHITE + Style.DIM} [%(asctime)s,%(msecs)010.6f"
+                f"{Fore.WHITE + Style.DIM}[%(asctime)s,%(msecs)010.6f"
                 f" {Fore.BLUE} %(levelname)s %(filename)s:%(lineno)d"
                 f" %(funcName)s] {Fore.MAGENTA} %(message)s{Style.RESET_ALL}"
             ),
             logging.VERBOSE: (
-                f"{Fore.WHITE + Style.DIM} [%(asctime)s,%(msecs)010.6f"
+                f"{Fore.WHITE + Style.DIM}[%(asctime)s,%(msecs)010.6f"
                 f" {Fore.WHITE} %(levelname)s"
                 " %(filename)s:%(lineno)d %(funcName)s]"
                 f"{Style.RESET_ALL} %(message)s{Style.RESET_ALL}"
             ),
             logging.INFO: (
-                f"{Fore.WHITE + Style.DIM} [%(asctime)s,%(msecs)010.6f"
+                f"{Fore.WHITE + Style.DIM}[%(asctime)s,%(msecs)010.6f"
                 f" {Style.RESET_ALL}{Fore.CYAN} %(levelname)s"
                 " %(filename)s:%(lineno)d %(funcName)s]"
                 f" {Fore.MAGENTA} %(message)s{Style.RESET_ALL}"
             ),
             logging.WARNING: (
-                f"{Fore.WHITE + Style.DIM} [%(asctime)s,%(msecs)010.6f"
+                f"{Fore.WHITE + Style.DIM}[%(asctime)s,%(msecs)010.6f"
                 f" {Style.RESET_ALL}{Fore.YELLOW} %(levelname)s"
                 " %(filename)s:%(lineno)d %(funcName)s]"
                 f" {Fore.YELLOW + Style.BRIGHT} %(message)s{Style.RESET_ALL}"
             ),
             logging.SUCCESS: (
-                f"{Fore.WHITE + Style.DIM} [%(asctime)s,%(msecs)010.6f"
+                f"{Fore.WHITE + Style.DIM}[%(asctime)s,%(msecs)010.6f"
                 f" {Style.RESET_ALL}{Fore.GREEN} %(levelname)s"
                 " %(filename)s:%(lineno)d %(funcName)s]"
                 f" {Fore.GREEN + Style.BRIGHT} %(message)s{Style.RESET_ALL}"
             ),
             logging.ERROR: (
-                f"{Fore.WHITE + Style.DIM} [%(asctime)s,%(msecs)010.6f"
+                f"{Fore.WHITE + Style.DIM}[%(asctime)s,%(msecs)010.6f"
                 f" {Style.RESET_ALL}{Fore.RED} %(levelname)s"
                 " %(filename)s:%(lineno)d %(funcName)s]"
                 f" {Style.BRIGHT} %(message)s{Style.RESET_ALL}"
             ),
             logging.CRITICAL: (
-                f"{Fore.WHITE + Style.DIM} [%(asctime)s,%(msecs)010.6f"
+                f"{Fore.WHITE + Style.DIM}[%(asctime)s,%(msecs)010.6f"
                 f"{Style.RESET_ALL}{Fore.RED} %(levelname)s"
                 " %(filename)s:%(lineno)d %(funcName)s]"
                 f" {Style.BRIGHT} %(message)s{Style.RESET_ALL}"

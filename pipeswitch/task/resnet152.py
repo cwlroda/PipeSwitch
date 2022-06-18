@@ -1,8 +1,8 @@
 import os
 import torch
+from pprint import pformat
 
-from pipeswitch.common.consts import Timers
-from pipeswitch.profiling.timer import timer
+from pipeswitch.common.logger import logger
 import pipeswitch.task.common as util
 
 
@@ -64,6 +64,7 @@ class ResNet152(object):
         )
         # print(type(model))
         util.set_fullname(model, MODEL_NAME)
+        logger.spam(f"\n{pformat(list(model.named_children()))}")
         # print("set_fullname")
 
         return model
@@ -77,17 +78,22 @@ class ResNet152(object):
 
         group_list.append(before_core)
         for name, child in model.named_children():
-            # print(f"child: {name}, {child}")
+            logger.spam(f"named child: {name}, {child}")
             if "layer" in name:
                 core_complete = True
-                for _, child_child in child.named_children():
-                    # print(f"child_child: {name_name}, {child_child}")
+                logger.spam("layer in name start")
+                for name_name, child_child in child.named_children():
                     group_list.append([child_child])
+                    logger.spam(f"{name_name}, {child_child}")
+                logger.spam("layer in name end")
             else:
                 if not core_complete:
                     before_core.append(child)
+                    logger.spam(f"before core: {child}")
                 else:
                     after_core.append(child)
+                    logger.spam(f"after core: {child}")
         group_list.append(after_core)
+        logger.spam(f"\n{pformat(group_list)}")
 
         return group_list

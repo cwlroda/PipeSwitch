@@ -37,7 +37,7 @@ class Scheduler(Process):
     ) -> None:
         super().__init__()
         self._name: str = self.__class__.__name__
-        self._stop: Event = Event()
+        self._stop_run: Event = Event()
         self._policy: Policy = RoundRobinPolicy()
         self._runner_idx: List[int] = num_runners
         self._runner_status: OrderedDict[int, State] = runner_status
@@ -46,7 +46,7 @@ class Scheduler(Process):
         )
 
     def run(self) -> None:
-        while not self._stop.is_set():
+        while not self._stop_run.is_set():
             runner_id, status = self._runner_status_queue.get()
             logger.debug(f"{self._name}: Runner {runner_id} {status}")
             self._runner_status[runner_id] = status
@@ -76,7 +76,7 @@ class Scheduler(Process):
     def shutdown(self):
         """Shutdown the runner."""
         logger.debug(f"{self._name}: stopping...")
-        self._stop.set()
+        self._stop_run.set()
         logger.debug(f"{self._name}: stopped!")
 
     @property

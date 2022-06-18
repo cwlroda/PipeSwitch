@@ -55,10 +55,7 @@ class ResNet152Inference(object):
     def import_parameters(self):
         model = self.import_model()
         group_list = self.resnet152.partition_model(model)
-        # print("partition_model")
-        # print(group_list)
         batch_list = [util.group_to_batch(group) for group in group_list]
-        # print("group_to_batch")
         return batch_list
 
 

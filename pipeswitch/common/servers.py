@@ -52,7 +52,7 @@ class RedisServer(ABC, Thread):
     ) -> None:
         super().__init__()
         self._ready: bool = False
-        self._stop: Event = Event()
+        self._stop_run: Event = Event()
         self._host: str = host
         self._port: int = port
         self._client_id: str = client_id
@@ -65,8 +65,6 @@ class RedisServer(ABC, Thread):
             retry_on_timeout=True,
         )
         self._msg_id: str = ""
-        self._msg_count: int = 0
-        self._msg_limit: int = 10
 
     def run(self) -> None:
         if self._redis.ping():
@@ -76,24 +74,24 @@ class RedisServer(ABC, Thread):
             )
         else:
             logger.error(f"{self._server_name}: connection failed!")
-        while not self._stop.is_set():
+        while not self._stop_run.is_set():
             msg: Tuple[str, OrderedDict[str, Any]] = self._redis.xread(
                 streams={
                     self.sub_stream: self._msg_id if self._msg_id else "$"
                 },
                 count=None,
-                block=0,
+                block=5000,
             )
-            if msg is not None:
+            if len(msg) > 0:
                 self._process_msg(msg)
 
     @timer(Timers.PERF_COUNTER)
     def publish(self, msg: OrderedDict[str, Any]) -> None:
         if self.pub_stream == "":
             return
-        logger.debug(
+        logger.spam(
             f"{self._server_name}: Publishing msg to stream"
-            f" {self.pub_stream}\n{pformat(object=msg, indent=1, width=1)}"
+            f" {self.pub_stream}\n{pformat(msg)}"
         )
         self._redis.xadd(self.pub_stream, msg)
 
@@ -106,25 +104,16 @@ class RedisServer(ABC, Thread):
 
     @timer(Timers.THREAD_TIMER)
     def _process_msg(self, msg: List[Any]) -> None:
-        logger.debug(
-            f"{self._server_name}: Message"
-            f" received:\n{pformat(object=msg, indent=1, width=1)}"
-        )
+        logger.spam(f"{self._server_name}: Message received:\n{pformat(msg)}")
         for msg_item in msg:
             entry_id, entry = msg_item[1][0]
             self._sub_queue.put(entry)
             self._msg_id = entry_id
-        self._msg_count += 1
-        if self._msg_count > self._msg_limit:
-            logger.debug(
-                f"{self._server_name}: Clearing old messages from stream"
-                f" {self.sub_stream}"
-            )
-            self._redis.xtrim(name=self.sub_stream, minid=self._msg_id)
-            self._msg_count = 0
+        logger.spam(f"{self._server_name}: Deleting message\n{pformat(msg)}")
+        self._redis.xtrim(self.sub_stream, minid=self._msg_id)
 
     def shutdown(self) -> None:
-        self._stop.set()
+        self._stop_run.set()
         self.delete_streams()
 
     @property

@@ -30,7 +30,7 @@ class ClientManager(Process):
     ) -> None:
         super().__init__()
         self._name: str = self.__class__.__name__
-        self._stop: Event = Event()
+        self._stop_run: Event = Event()
         self._max_clients: int = 10
         self._clients: OrderedDict[str, RedisServer] = OrderedDict()
         self._conn_queue: "Queue[OrderedDict[str, Any]]" = Queue()
@@ -52,7 +52,7 @@ class ClientManager(Process):
         self._results_checker = Thread(target=self._check_results)
         self._results_checker.daemon = True
         self._results_checker.start()
-        while not self._stop.is_set():
+        while not self._stop_run.is_set():
             conn: OrderedDict[str, Any] = self._conn_queue.get()
             self._manage_connections(conn)
 
@@ -101,20 +101,19 @@ class ClientManager(Process):
         if len(self._clients) < self._max_clients:
             if conn["client_id"] in self._client_blacklist.keys():
                 self._client_blacklist.pop(conn["client_id"])
-            req_server: RedisServer = ManagerClientRequestsServer(
+            self._clients[conn["client_id"]] = ManagerClientRequestsServer(
                 client_id=conn["client_id"],
                 host=REDIS_HOST,
                 port=REDIS_PORT,
                 sub_queue=self._requests_queue,
             )
-            req_server.daemon = True
-            req_server.start()
-            self._clients[conn["client_id"]] = req_server
+            self._clients[conn["client_id"]].daemon = True
+            self._clients[conn["client_id"]].start()
             resp: str = {
                 "client_id": conn["client_id"],
                 "status": ResponseStatus.OK.value,
-                "requests_stream": req_server.sub_stream,
-                "results_stream": req_server.pub_stream,
+                "requests_stream": self._clients[conn["client_id"]].sub_stream,
+                "results_stream": self._clients[conn["client_id"]].pub_stream,
                 "host": REDIS_HOST,
                 "port": REDIS_PORT,
             }
@@ -131,10 +130,11 @@ class ClientManager(Process):
 
     @timer(Timers.THREAD_TIMER)
     def _disconnect(self, conn: OrderedDict[str, Any]) -> None:
-        self._clients[conn["client_id"]].delete_streams()
         self._client_blacklist[conn["client_id"]] = 1
+        client_server: RedisServer = self._clients.pop(conn["client_id"])
+        if client_server.is_alive():
+            client_server.shutdown()
         logger.info(f"{self._name}: Disconnected client {conn['client_id']}")
-        self._clients.pop(conn["client_id"])
         resp = {
             "client_id": conn["client_id"],
             "status": ResponseStatus.OK.value,
@@ -144,13 +144,16 @@ class ClientManager(Process):
         return ok
 
     def _check_results(self) -> None:
-        while self._stop:
+        while not self._stop_run.is_set():
             result: OrderedDict[str, Any] = self._results_queue.get()
             self._check_result(result)
 
     @timer(Timers.THREAD_TIMER)
     def _check_result(self, result: OrderedDict[str, Any]) -> None:
-        if result["client_id"] not in self._client_blacklist.keys():
+        if (
+            result["client_id"] in self._clients.keys()
+            and result["client_id"] not in self._client_blacklist.keys()
+        ):
             if result["status"] == State.SUCCESS:
                 self._tasks_complete += 1
             else:
@@ -179,16 +182,16 @@ class ClientManager(Process):
     def shutdown(self):
         """Shutdown the runner."""
         logger.debug(f"{self._name}: stopping...")
-        self._stop.set()
+        self._stop_run.set()
         if hasattr(self, "_results_checker"):
             if self._results_checker.is_alive():
                 self._results_checker.terminate()
         for client_server in self._clients.values():
             if client_server.is_alive():
                 client_server.shutdown()
-                client_server.terminate()
+                client_server.join()
         if hasattr(self, "_conn_server"):
             if self._conn_server.is_alive():
                 self._conn_server.shutdown()
-                self._conn_server.terminate()
+                self._conn_server.join()
         logger.debug(f"{self._name}: stopped!")

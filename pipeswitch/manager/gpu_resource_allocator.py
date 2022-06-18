@@ -82,12 +82,7 @@ class GPUResourceAllocator(object):
     def warmup_gpus(self, gpus: List[int]) -> None:
         """Warmup GPUs by running a dummy PyTorch function."""
         for gpu_id in gpus:
-            torch.cuda.set_device(gpu_id)
             torch.randn(1024, device=f"cuda:{gpu_id}")
-            torch.cuda.allocate_cache(gpu_id)  # type: ignore
-            logger.debug(
-                f"{self._name}: Allocated shared cache for GPU {gpu_id}"
-            )
 
     @timer(Timers.PERF_COUNTER)
     def release_gpus(self) -> None:

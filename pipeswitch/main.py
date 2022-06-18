@@ -36,10 +36,13 @@ def get_parser() -> ArgumentParser:
     parser = ArgumentParser(description="PipeSwitch Run Script")
 
     parser.add_argument(
-        "--mode",
-        type=str,
-        default="cpu",
-        help="Mode of the PipeSwitchManager: 'gpu' or 'cpu'. Default is 'cpu'",
+        "--cpu",
+        action="store_true",
+        default=False,
+        help=(
+            "Mode of the PipeSwitchManager. Setting the flag uses CPU execution"
+            " instead of GPU. Default is False"
+        ),
     )
     parser.add_argument(
         "--num_gpus",
@@ -76,7 +79,10 @@ def launch():
         logger.info(f"PID: {os.getpid()}")
         args: ArgumentParser = get_parser().parse_args()
         logger.info(f"Arguments: {str(args)}")
-
+        if args.cpu:
+            mode = "cpu"
+        else:
+            mode = "gpu"
         if args.redis:
             os.system("redis-server redis.conf")
         redis = Redis(host=REDIS_HOST, port=REDIS_PORT)
@@ -86,7 +92,7 @@ def launch():
             return
 
         manager: PipeSwitchManager = PipeSwitchManager(
-            mode=args.mode, num_gpus=args.num_gpus
+            mode=mode, num_gpus=args.num_gpus
         )
         manager.run()
     except exceptions.ConnectionError as conn_err:

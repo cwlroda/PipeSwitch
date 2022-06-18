@@ -4,24 +4,17 @@ import json
 from urllib import request
 from redis import Redis
 from pprint import pformat
-import torch
+from tqdm import tqdm
 
-from detectron2.data import (
-    MetadataCatalog,
-)
 from detectron2.data.detection_utils import read_image
-import detectron2.data.transforms as T
-
-from few_shot_detection.fsdet.checkpoint import DetectionCheckpointer
 from few_shot_detection.fsdet.config import get_cfg
-from few_shot_detection.fsdet.modeling import build_model
+from few_shot_detection.fsdet.engine import DefaultPredictor
 
-from pipeswitch.common.consts import REDIS_HOST, REDIS_PORT, Timers
-from pipeswitch.profiling.timer import timer
+from pipeswitch.common.consts import REDIS_HOST, REDIS_PORT
 from pipeswitch.common.logger import logger
 
 
-MODEL_NAME = "fsdet"
+MODEL_NAME = "FSDET"
 
 
 class FSDET:
@@ -35,35 +28,13 @@ class FSDET:
                 "fsdet://coco/tfa_cos_1shot/model_final.pth",
             ]
         )
+        # logger.info(f"Arguments: {str(self.args)}")
         self._data_loader = Redis(
             host=REDIS_HOST,
             port=REDIS_PORT,
             encoding="utf-8",
             decode_responses=True,
         )
-
-    @torch.no_grad()
-    def __call__(self, original_image):
-        """
-        Args:
-            original_image (np.ndarray): an image of shape (H, W, C) (in BGR order).
-
-        Returns:
-            predictions (dict): the output of the model
-        """
-        # Apply pre-processing to image.
-        if self.input_format == "RGB":
-            # whether the model expects BGR inputs or RGB
-            original_image = original_image[:, :, ::-1]
-        height, width = original_image.shape[:2]
-        image = self.transform_gen.get_transform(original_image).apply_image(
-            original_image
-        )
-        image = torch.as_tensor(image.astype("float32").transpose(2, 0, 1))
-
-        inputs = {"image": image, "height": height, "width": width}
-        predictions = self.model([inputs])[0]
-        return predictions
 
     def setup_cfg(self, args):
         # load config from file and command-line arguments
@@ -124,16 +95,28 @@ class FSDET:
         )
         return parser
 
-    def import_data(self, task_key):
-        data_str = self._data_loader.get(task_key)
+    def import_data(self, task):
+        data_str = self._data_loader.get(task["task_key"])
         data = json.loads(data_str)
-        logger.spam(f"\n{pformat(object=data, indent=1, width=1)}")
-        img_url = data["task"]["items"][0]["urls"]["-1"]
-        img_name = img_url.split("/")[-1]
-        if not os.path.exists(img_name):
-            request.urlretrieve(img_url, img_name)
-        img = read_image(img_name, format="BGR")
-        return img
+        logger.spam(f"\n{pformat(data)}")
+        img_urls = [item["urls"]["-1"] for item in data["task"]["items"]]
+        imgs = []
+        for img_url in tqdm(
+            img_urls,
+            desc="Retrieving images",
+            leave=True,
+            position=0,
+            unit="items",
+        ):
+            img_name = img_url.split("/")[-1]
+            img_dir = os.path.join("data", task["client_id"])
+            img_path = os.path.join(img_dir, img_name)
+            if not os.path.exists(img_path):
+                os.makedirs(img_dir, exist_ok=True)
+                request.urlretrieve(img_url, img_path)
+            img = read_image(img_path, format="BGR")
+            imgs.append(img)
+        return imgs
 
     def import_model(self, device=None):
         cfg = self.setup_cfg(self.args)
@@ -141,23 +124,5 @@ class FSDET:
             cfg.defrost()
             cfg.MODEL.DEVICE = device
             cfg.freeze()
-        self.cfg = cfg.clone()  # cfg can be modified by model
-        self.model = build_model(self.cfg)
-        self.model.eval()
-        self.metadata = MetadataCatalog.get(cfg.DATASETS.TEST[0])
-
-        checkpointer = DetectionCheckpointer(self.model)
-        checkpointer.load(cfg.MODEL.WEIGHTS)
-
-        self.transform_gen = T.ResizeShortestEdge(
-            [cfg.INPUT.MIN_SIZE_TEST, cfg.INPUT.MIN_SIZE_TEST],
-            cfg.INPUT.MAX_SIZE_TEST,
-        )
-
-        self.input_format = cfg.INPUT.FORMAT
-        assert self.input_format in ["RGB", "BGR"], self.input_format
-        return self.model
-
-    def partition_model(self, model):
-        group_list = [[child] for child in model.children()]
-        return group_list
+        predictor = DefaultPredictor(cfg)
+        return predictor, predictor.model
