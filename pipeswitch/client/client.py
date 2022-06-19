@@ -1,5 +1,5 @@
-import sys
-import time
+# -*- coding: utf-8 -*-
+from time import perf_counter, sleep
 from argparse import ArgumentParser
 from uuid import uuid4
 from queue import Queue
@@ -7,16 +7,13 @@ from typing import Any, OrderedDict
 from threading import Thread
 
 from pipeswitch.common.consts import (
-    ConnectionRequest,
     REDIS_HOST,
     REDIS_PORT,
-    ResponseStatus,
     State,
     Timers,
 )
 from pipeswitch.common.logger import logger
 from pipeswitch.common.servers import (
-    ClientConnectionServer,
     ClientRequestsServer,
     RedisServer,
 )
@@ -54,114 +51,37 @@ class Client:
         self._name: str = self.__class__.__name__
         # self._client_id: str = str(uuid4())
         self._client_id: str = "scalabel"
-        self._conn_queue: "Queue[OrderedDict[str, Any]]" = Queue()
-        self._conn_server: RedisServer = ClientConnectionServer(
+        self._results_queue: "Queue[OrderedDict[str, Any]]" = Queue()
+        self._req_server: RedisServer = ClientRequestsServer(
             client_id=self._client_id,
             host=REDIS_HOST,
             port=REDIS_PORT,
-            sub_queue=self._conn_queue,
+            sub_queue=self._results_queue,
         )
         self._model_name: str = model_name
         self._batch_size: int = batch_size
         self._num_it: int = num_it
         self._task_queue: "Queue[OrderedDict[str, Any]]" = Queue()
         self._pending_tasks: OrderedDict[str, str] = OrderedDict()
-        self._results_queue: "Queue[OrderedDict[str, Any]]" = Queue()
 
     @timer(Timers.PERF_COUNTER)
     def run(self) -> None:
         try:
-            self._conn_server.daemon = True
-            self._conn_server.start()
-            self._connect()
+            self._req_server.daemon = True
+            self._req_server.start()
             self._prepare_requests()
+            while not self._req_server.ready:
+                sleep(0.1)
             send_requests = Thread(target=self._send_requests)
             send_requests.daemon = True
             send_requests.start()
             timeout = Thread(target=self._timeout)
             timeout.daemon = True
             timeout.start()
+
             self._receive_results()
-            self._disconnect()
         except KeyboardInterrupt:
             self._shutdown()
-
-    @timer(Timers.PERF_COUNTER)
-    def _connect(self) -> None:
-        msg: OrderedDict[str, Any] = {
-            "client_id": self._client_id,
-            "request": ConnectionRequest.CONNECT.value,
-        }
-        self._conn_server.publish(msg)
-
-        conn: OrderedDict[str, Any] = self._conn_queue.get()
-        if conn["client_id"] == self._client_id:
-            logger.success(
-                f"{self._name} {self._client_id}: Received handshake from"
-                " manager"
-            )
-            if conn["status"] == ResponseStatus.OK.value:
-                self.req_server = ClientRequestsServer(
-                    client_id=self._client_id,
-                    host=conn["host"],
-                    port=conn["port"],
-                    sub_queue=self._results_queue,
-                )
-                if self.req_server.pub_stream != conn["requests_stream"]:
-                    logger.error(
-                        f"{self._name} {self._client_id}: Stream mismatch:"
-                        f" {self.req_server.pub_stream} !="
-                        f" {conn['requests_stream']}"
-                    )
-                if self.req_server.sub_stream != conn["results_stream"]:
-                    logger.error(
-                        f"{self._name} {self._client_id}: Stream mismatch:"
-                        f" {self.req_server.sub_stream} !="
-                        f" {conn['results_stream']}"
-                    )
-                self.req_server.daemon = True
-                self.req_server.start()
-
-            elif conn["status"] == ResponseStatus.ERROR.value:
-                logger.error(
-                    f"{self._name} {self._client_id}: {conn['err_msg']}"
-                )
-                sys.exit(1)
-        else:
-            logger.debug(
-                f"{self._name} {self._client_id}: Ignoring invalid handshake"
-                f" {msg}"
-            )
-
-    @timer(Timers.PERF_COUNTER)
-    def _disconnect(self) -> None:
-        msg = {
-            "client_id": self._client_id,
-            "request": ConnectionRequest.DISCONNECT.value,
-        }
-        self._conn_server.publish(msg)
-
-        conn: OrderedDict[str, Any] = self._conn_queue.get()
-        if conn["client_id"] == self._client_id:
-            logger.success(
-                f"{self._name} {self._client_id}: Received handshake from"
-                " manager"
-            )
-            if conn["status"] == ResponseStatus.OK.value:
-                logger.info(f"{self._name} {self._client_id}: Disconnecting...")
-                return
-
-            elif conn["status"] == ResponseStatus.ERROR.value:
-                logger.error(
-                    f"{self._name} {self._client_id} error msg:"
-                    f" {conn['err_msg']}"
-                )
-                sys.exit(1)
-        else:
-            logger.debug(
-                f"{self._name} {self._client_id}: Ignoring invalid handshake"
-                f" {msg}"
-            )
 
     @timer(Timers.PERF_COUNTER)
     def _prepare_requests(self) -> None:
@@ -192,7 +112,8 @@ class Client:
             f" {msg['task_id']}"
         )
         self._pending_tasks[msg["task_id"]] = msg
-        self.req_server.publish(msg)
+        stream = "REQUESTS"
+        self._req_server.publish(stream, msg)
 
     @timer(Timers.PERF_COUNTER)
     def _receive_results(self) -> None:
@@ -230,10 +151,10 @@ class Client:
                     self._task_queue.put(self._pending_tasks[result["task_id"]])
 
     def _timeout(self) -> None:
-        start_time = time.perf_counter()
+        start_time = perf_counter()
         timeout = 10 * self._num_it
         while True:
-            if (time.perf_counter() - start_time) > timeout:
+            if (perf_counter() - start_time) > timeout:
                 logger.warning(
                     f"{self._name} {self._client_id}: requests timed out after"
                     f" {timeout}s"
@@ -244,7 +165,7 @@ class Client:
                 )
                 for _, task in self._pending_tasks.items():
                     self._task_queue.put(task)
-                start_time = time.perf_counter()
+                start_time = perf_counter()
 
     def _shutdown(self) -> None:
         logger.warning(f"{self._name} {self._client_id}: shutting down")

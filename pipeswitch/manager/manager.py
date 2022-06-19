@@ -71,11 +71,9 @@ class PipeSwitchManager:
         self._runner_status_queue: "Queue[Tuple[int, State]]" = Queue()
         self._requests_queue: "Queue[OrderedDict[str, Any]]" = Queue()
         self._results_queue: "Queue[OrderedDict[str, Any]]" = Queue()
-        self._client_blacklist: OrderedDict[str, int] = self._manager.dict()
         self._client_manager: ClientManager = ClientManager(
             requests_queue=self._requests_queue,
             results_queue=self._results_queue,
-            client_blacklist=self._client_blacklist,
         )
         self._model_classes: OrderedDict[str, object] = self._manager.dict()
         self._models: OrderedDict[str, Any] = OrderedDict()
@@ -113,19 +111,12 @@ class PipeSwitchManager:
                     f"{self._name}: {self._requests_queue.qsize() + 1} task(s)"
                     " in requests queue"
                 )
-                if task["client_id"] in self._client_blacklist.keys():
-                    logger.warning(
-                        f"{self._name}: Ignoring stale task"
-                        f" {task['model_name']} {task['task_type']} with id"
-                        f" {task['task_id']} from client {task['client_id']}"
-                    )
-                else:
-                    logger.info(
-                        f"{self._name}: Received task"
-                        f" {task['model_name']} {task['task_type']} with id"
-                        f" {task['task_id']} from client {task['client_id']}"
-                    )
-                    self._allocate_task(task)
+                logger.info(
+                    f"{self._name}: Received task"
+                    f" {task['model_name']} {task['task_type']} with id"
+                    f" {task['task_id']} from client {task['client_id']}"
+                )
+                self._allocate_task(task)
         except GPUError:
             return
         except KeyboardInterrupt:
@@ -144,10 +135,6 @@ class PipeSwitchManager:
                 self._scheduler.shutdown()
                 self._scheduler.terminate()
             logger.warning(f"{self._name}: Terminated scheduler")
-        if hasattr(self, "_models_loader"):
-            for model_loader in self._models_loader:
-                if model_loader.is_alive():
-                    model_loader.terminate()
         if hasattr(self, "_runners"):
             for runner in self._runners.values():
                 if runner.is_alive():

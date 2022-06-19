@@ -68,10 +68,10 @@ class RedisServer(ABC, Thread):
 
     def run(self) -> None:
         if self._redis.ping():
-            self._ready = True
             logger.info(
                 f"{self._server_name}: Listening to stream {self.sub_stream}"
             )
+            self._ready = True
         else:
             logger.error(f"{self._server_name}: connection failed!")
         while not self._stop_run.is_set():
@@ -86,19 +86,15 @@ class RedisServer(ABC, Thread):
                 self._process_msg(msg)
 
     @timer(Timers.PERF_COUNTER)
-    def publish(self, msg: OrderedDict[str, Any]) -> None:
-        if self.pub_stream == "":
-            return
+    def publish(self, stream: str, msg: OrderedDict[str, Any]) -> None:
         logger.spam(
             f"{self._server_name}: Publishing msg to stream"
-            f" {self.pub_stream}\n{pformat(msg)}"
+            f" {stream}\n{pformat(msg)}"
         )
-        self._redis.xadd(self.pub_stream, msg)
+        self._redis.xadd(stream, msg)
 
     @timer(Timers.PERF_COUNTER)
     def delete_streams(self) -> None:
-        logger.debug(f"{self._server_name}: Deleting stream: {self.pub_stream}")
-        self._redis.delete(self.pub_stream)
         logger.debug(f"{self._server_name}: Deleting stream: {self.sub_stream}")
         self._redis.delete(self.sub_stream)
 
@@ -129,64 +125,19 @@ class RedisServer(ABC, Thread):
 
     @property
     @abstractmethod
-    def pub_stream(self) -> str:
-        pass
-
-    @property
-    @abstractmethod
     def sub_stream(self) -> str:
         pass
 
 
-class ManagerClientConnectionServer(RedisServer):
-    """Server in the manager that:
-    - Receives connection requests from clients.
-    - Sends handshake back to clients to confirm connection.
-    """
-
-    @property
-    def pub_stream(self) -> str:
-        return "HANDSHAKES"
-
-    @property
-    def sub_stream(self) -> str:
-        return "CONNECTIONS"
-
-
-class ManagerClientRequestsServer(RedisServer):
+class ManagerRequestsServer(RedisServer):
     """Server in the manager that:
     - Receives inference requests from a specific client.
     - Sends inference results to the specific client.
     """
 
     @property
-    def pub_stream(self) -> str:
-        if self._client_id != "":
-            return f"RESPONSES-{self._client_id}"
-        else:
-            return "RESPONSES"
-
-    @property
     def sub_stream(self) -> str:
-        if self._client_id != "":
-            return f"REQUESTS-{self._client_id}"
-        else:
-            return "REQUESTS"
-
-
-class ClientConnectionServer(RedisServer):
-    """Dummy client server that:
-    - Sends connection requests to the manager.
-    - Receives handshakes from the manager with the name of the requests server.
-    """
-
-    @property
-    def pub_stream(self) -> str:
-        return "CONNECTIONS"
-
-    @property
-    def sub_stream(self) -> str:
-        return "HANDSHAKES"
+        return "REQUESTS"
 
 
 class ClientRequestsServer(RedisServer):
@@ -194,13 +145,6 @@ class ClientRequestsServer(RedisServer):
     - Sends inference requests to the manager.
     - Receives inference results from the manager.
     """
-
-    @property
-    def pub_stream(self) -> str:
-        if self._client_id != "":
-            return f"REQUESTS-{self._client_id}"
-        else:
-            return "REQUESTS"
 
     @property
     def sub_stream(self) -> str:

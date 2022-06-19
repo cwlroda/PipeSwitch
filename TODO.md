@@ -23,3 +23,4 @@
 11. [x] Convert pubsub to streams for greater message reliability
 12. [x] Proper thread and process shutdown (no semaphore leaks)
 13. [ ] More efficient scheduling algorithm for runners
+14. [ ] Create client-side module in Scalabel to send requests

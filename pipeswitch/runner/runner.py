@@ -83,7 +83,6 @@ class Runner(Process):
         self._model_list = model_list
         self._model_classes: OrderedDict[str, object] = model_classes
         self._models: OrderedDict[str, Any] = OrderedDict()
-        self._curr_model: str = ""
 
     def run(self) -> None:
         """Main runner function that sets up the runner and runs it.
@@ -108,8 +107,7 @@ class Runner(Process):
                 load_model.join()
                 self._load_jobs.append(load_model)
                 self._models[model_name] = model_summary
-
-        logger.debug(f"{self._name} {self._device}: import models")
+            logger.debug(f"{self._name} {self._device}: import models")
         self._update_status(State.IDLE)
         while not self._stop_run.is_set():
             task: OrderedDict[str, Any] = self._task_out.recv()
@@ -142,9 +140,14 @@ class Runner(Process):
                 model_summary: ModelSummary = self._models[
                     f"{task['model_name']}_{task['task_type']}"
                 ]
+                output = self._execute_task(task, model_summary)
             else:
-                model_summary = None
-            output = self._execute_task(task, model_summary)
+                logger.debug(
+                    f"{self._name} {self._device}: CPU debug mode task"
+                    " execution"
+                )
+                sleep(5)
+                output = "some random output"
             msg: OrderedDict[str, Any] = {
                 "client_id": task["client_id"],
                 "task_type": task["task_type"],
@@ -159,8 +162,6 @@ class Runner(Process):
                 f" {task['task_id']} {task['task_type']} with id"
                 f" {task['task_id']} complete"
             )
-            if self._mode == "gpu":
-                self._curr_model = f"{task['model_name']}_{task['task_type']}"
             self._update_status(State.IDLE)
         except RuntimeError as runtime_err:
             logger.error(runtime_err)
@@ -189,18 +190,8 @@ class Runner(Process):
             f" {task['task_id']} from client {task['client_id']}"
         )
         logger.spam(f"{self._name} {self._device} data: \n{pformat(data)}")
-
-        if self._mode == "gpu":
-            output = model_summary.execute(task, data)
-            logger.spam(
-                f"{self._name} {self._device} output: \n{pformat(output)}"
-            )
-        else:
-            logger.debug(
-                f"{self._name} {self._device}: CPU debug mode task execution"
-            )
-            output = "some random data"
-            sleep(5)
+        output = model_summary.execute(task, data)
+        logger.spam(f"{self._name} {self._device} output: \n{pformat(output)}")
         return output
 
     @timer(Timers.THREAD_TIMER)
@@ -221,7 +212,3 @@ class Runner(Process):
     @property
     def task_in(self):
         return self._task_in
-
-    @property
-    def curr_model(self):
-        return self._curr_model

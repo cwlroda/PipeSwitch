@@ -112,7 +112,7 @@ DEBUG_FORMAT = (
 )
 debug_formatter = logging.Formatter(fmt=DEBUG_FORMAT)
 debug_handler = logging.FileHandler(DEBUG_LOG_FILE)
-debug_handler.setLevel(logging.DEBUG)
+debug_handler.setLevel(logging.SPAM)
 debug_handler.setFormatter(debug_formatter)
 
 if not os.path.exists(TIMING_LOG_FILE):
