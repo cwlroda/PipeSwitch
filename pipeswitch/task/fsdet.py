@@ -118,11 +118,11 @@ class FSDET:
             imgs.append(img)
         return imgs
 
-    def import_model(self, device=None):
+    def import_model(self, devices=None):
         cfg = self.setup_cfg(self.args)
-        if device is not None:
+        if devices is not None:
             cfg.defrost()
-            cfg.MODEL.DEVICE = device
+            cfg.MODEL.DEVICE = devices[0]
             cfg.freeze()
         predictor = DefaultPredictor(cfg)
         return predictor, predictor.model

@@ -31,7 +31,7 @@ class Scheduler(Process):
     @timer(Timers.THREAD_TIMER)
     def __init__(
         self,
-        num_runners: List[int],
+        runner_idx: List[int],
         runner_status: OrderedDict[int, State],
         runner_status_queue: "Queue[Tuple[int, State]]",
     ) -> None:
@@ -39,7 +39,7 @@ class Scheduler(Process):
         self._name: str = self.__class__.__name__
         self._stop_run: Event = Event()
         self._policy: Policy = RoundRobinPolicy()
-        self._runner_idx: List[int] = num_runners
+        self._runner_idx: List[int] = runner_idx
         self._runner_status: OrderedDict[int, State] = runner_status
         self._runner_status_queue: "Queue[Tuple[int, State]]" = (
             runner_status_queue

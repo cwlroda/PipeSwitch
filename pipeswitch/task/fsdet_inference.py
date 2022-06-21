@@ -16,8 +16,8 @@ class FSDETInference:
         data = self.fsdet.import_data(task)
         return data
 
-    def import_model(self, device=None):
-        self.predictor, model = self.fsdet.import_model(device)
+    def import_model(self, devices=None):
+        self.predictor, model = self.fsdet.import_model(devices)
         return model
 
     def import_func(self):
@@ -37,8 +37,8 @@ class FSDETInference:
         return inference
 
     @timer(Timers.THREAD_TIMER)
-    def import_task(self, device):
-        model = self.import_model(device)
+    def import_task(self, devices):
+        model = self.import_model(devices)
         func = self.import_func()
         return model, func
 

@@ -63,7 +63,8 @@ class Runner(Process):
     def __init__(
         self,
         mode: str,
-        device: int,
+        runner_id: int,
+        devices: List[int],
         runner_status_queue: "Queue[Tuple[int, State]]",
         model_list: List[str],
         model_classes: OrderedDict[str, object],
@@ -73,7 +74,8 @@ class Runner(Process):
         self._name = self.__class__.__name__
         self._stop_run: Event = Event()
         self._mode: str = mode
-        self._device: int = device
+        self._runner_id: int = runner_id
+        self._devices: List[int] = devices
         self._status: State = State.STARTUP
         self._runner_status_queue: "Queue[Tuple[int, State]]" = (
             runner_status_queue
@@ -90,14 +92,12 @@ class Runner(Process):
         Raises:
             `TypeError`: If the message received is not a JSON string.
         """
-        logger.debug(f"{self._name} {self._device}: start")
+        logger.debug(f"{self._name} {self._runner_id}: start")
         if self._mode == "gpu":
-            logger.debug(f"{self._name} {self._device}: share GPU memory")
             self._load_jobs: List[Thread] = []
             for model_name, model_class in self._model_classes.items():
                 model_summary: ModelSummary = ModelSummary(
-                    mode=self._mode,
-                    device=self._device,
+                    devices=self._devices,
                     model_name=model_name,
                     model_class=model_class,
                 )
@@ -107,7 +107,7 @@ class Runner(Process):
                 load_model.join()
                 self._load_jobs.append(load_model)
                 self._models[model_name] = model_summary
-            logger.debug(f"{self._name} {self._device}: import models")
+            logger.debug(f"{self._name} {self._runner_id}: import models")
         self._update_status(State.IDLE)
         while not self._stop_run.is_set():
             task: OrderedDict[str, Any] = self._task_out.recv()
@@ -120,10 +120,10 @@ class Runner(Process):
 
             self._status = status
             logger.debug(
-                f"{self._name} {self._device}: Updating status to"
+                f"{self._name} {self._runner_id}: Updating status to"
                 f" {self._status}"
             )
-            self._runner_status_queue.put((self._device, self._status))
+            self._runner_status_queue.put((self._runner_id, self._status))
         except KeyboardInterrupt as kb_err:
             raise KeyboardInterrupt from kb_err
 
@@ -131,7 +131,7 @@ class Runner(Process):
     def _manage_task(self, task: OrderedDict[str, Any]) -> None:
         try:
             logger.debug(
-                f"{self._name} {self._device}: received task"
+                f"{self._name} {self._runner_id}: received task"
                 f" {task['model_name']} {task['task_type']} with id"
                 f" {task['task_id']} from client {task['client_id']}"
             )
@@ -143,7 +143,7 @@ class Runner(Process):
                 output = self._execute_task(task, model_summary)
             else:
                 logger.debug(
-                    f"{self._name} {self._device}: CPU debug mode task"
+                    f"{self._name} {self._runner_id}: CPU debug mode task"
                     " execution"
                 )
                 sleep(5)
@@ -158,14 +158,14 @@ class Runner(Process):
             }
             self._results_queue.put(msg)
             logger.debug(
-                f"{self._name} {self._device}: task"
+                f"{self._name} {self._runner_id}: task"
                 f" {task['task_id']} {task['task_type']} with id"
                 f" {task['task_id']} complete"
             )
             self._update_status(State.IDLE)
         except RuntimeError as runtime_err:
             logger.error(runtime_err)
-            logger.error(f"{self._name} {self._device}: task failed!")
+            logger.error(f"{self._name} {self._runner_id}: task failed!")
             msg: OrderedDict[str, Any] = {
                 "client_id": task["client_id"],
                 "task_type": task["task_type"],
@@ -185,25 +185,27 @@ class Runner(Process):
         """Executes a task."""
         data = model_summary.load_data(task)
         logger.debug(
-            f"{self._name} {self._device}: retrieved data for task"
+            f"{self._name} {self._runner_id}: retrieved data for task"
             f" {task['model_name']} {task['task_type']} with id"
             f" {task['task_id']} from client {task['client_id']}"
         )
-        logger.spam(f"{self._name} {self._device} data: \n{pformat(data)}")
+        logger.spam(f"{self._name} {self._runner_id} data: \n{pformat(data)}")
         output = model_summary.execute(task, data)
-        logger.spam(f"{self._name} {self._device} output: \n{pformat(output)}")
+        logger.spam(
+            f"{self._name} {self._runner_id} output: \n{pformat(output)}"
+        )
         return output
 
     @timer(Timers.THREAD_TIMER)
     def shutdown(self):
         """Shutdown the runner."""
-        logger.debug(f"{self._name} {self._device}: stopping...")
+        logger.debug(f"{self._name} {self._runner_id}: stopping...")
         self._stop_run.set()
         if hasattr(self, "_load_jobs"):
             for load_job in self._load_jobs:
                 if load_job.is_alive():
                     load_job.terminate()
-        logger.debug(f"{self._name} {self._device}: stopped!")
+        logger.debug(f"{self._name} {self._runner_id}: stopped!")
 
     @property
     def model_in(self):

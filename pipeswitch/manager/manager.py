@@ -22,6 +22,8 @@ from typing import (  # pylint: disable=unused-import
     Tuple,
 )
 from torch.multiprocessing import Manager, Process, Queue
+import numpy as np
+from itertools import islice
 
 from pipeswitch.common.consts import State, Timers
 from pipeswitch.common.exceptions import GPUError
@@ -58,12 +60,19 @@ class PipeSwitchManager:
     """
 
     @timer(Timers.PERF_COUNTER)
-    def __init__(self, mode: str = "gpu", num_gpus: int = -1) -> None:
+    def __init__(
+        self,
+        mode: str = "gpu",
+        num_gpus: int = -1,
+        partitions: List[int] = None,
+    ) -> None:
         super().__init__()
         self._name: str = self.__class__.__name__
         self._do_run: bool = True
         self._mode: str = mode
         self._num_gpus: int = num_gpus
+        self._partitions: List[int] = partitions
+        self._allocated_gpus: List[List[int]] = []
         if self._mode == "gpu":
             self._gra: GPUResourceAllocator = GPUResourceAllocator()
         self._manager: Manager = Manager()
@@ -153,14 +162,19 @@ class PipeSwitchManager:
         self._client_manager.daemon = True
         self._client_manager.start()
         if self._mode == "gpu":
-            self.allocated_gpus = self._gra.reserve_gpus(self._num_gpus)
-            logger.info(f"{self._name}: Allocated GPUs {self.allocated_gpus}")
-            self._gra.warmup_gpus(gpus=self.allocated_gpus)
+            self._allocated_gpus: List[List[int]] = self._gra.reserve_gpus(
+                self._num_gpus, self._partitions
+            )
+            logger.info(f"{self._name}: Allocated GPUs {self._allocated_gpus}")
+            self._gra.warmup_gpus(gpus=self._allocated_gpus)
         else:
-            self.allocated_gpus = [*range(self._num_gpus)]
+            it = iter(range(self._num_gpus))
+            self._allocated_gpus = [
+                list(islice(it, 0, partition)) for partition in self._partitions
+            ]
         self._load_models()
         self._scheduler: Scheduler = Scheduler(
-            num_runners=self.allocated_gpus,
+            runner_idx=[*range(len(self._allocated_gpus))],
             runner_status=self._runner_status,
             runner_status_queue=self._runner_status_queue,
         )
@@ -205,10 +219,11 @@ class PipeSwitchManager:
             num_workers (`int`, optional):
                 number of workers to create per runner, default 2.
         """
-        for runner_id in self.allocated_gpus:
+        for runner_id, gpus in enumerate(self._allocated_gpus):
             runner: Process = Runner(
                 mode=self._mode,
-                device=runner_id,
+                runner_id=runner_id,
+                devices=gpus,
                 runner_status_queue=self._runner_status_queue,
                 model_list=self._model_list,
                 model_classes=self._model_classes,

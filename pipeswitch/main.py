@@ -21,6 +21,7 @@ import shutil
 from argparse import ArgumentParser
 from torch.multiprocessing import set_start_method
 from redis import exceptions, Redis
+import ast
 
 from pipeswitch.common.consts import (
     DEBUG_LOG_FILE,
@@ -49,6 +50,15 @@ def get_parser() -> ArgumentParser:
         type=int,
         default=1,
         help="Number of GPUs to use. Default is 1.",
+    )
+    parser.add_argument(
+        "--partitions",
+        type=str,
+        default="",
+        help=(
+            "GPU partitions to use for dynamic allocation, defined as a list of"
+            " integers. Default is 1 GPU per runner."
+        ),
     )
     parser.add_argument(
         "--redis",
@@ -90,9 +100,12 @@ def launch():
             logger.warning("Cannot connect to Redis server.")
             logger.warning("Please restart Redis.")
             return
-
+        if args.partitions:
+            partitions = ast.literal_eval(args.partitions)
+        else:
+            partitions = [1 for _ in range(args.num_gpus)]
         manager: PipeSwitchManager = PipeSwitchManager(
-            mode=mode, num_gpus=args.num_gpus
+            mode=mode, num_gpus=args.num_gpus, partitions=partitions
         )
         manager.run()
     except exceptions.ConnectionError as conn_err:

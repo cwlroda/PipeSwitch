@@ -10,6 +10,7 @@ Todo:
 
 import os
 from typing import OrderedDict, List
+from itertools import islice
 from gpustat import GPUStat, GPUStatCollection  # type: ignore
 import torch
 
@@ -38,7 +39,9 @@ class GPUResourceAllocator(object):
         self._cuda_init()
 
     @timer(Timers.PERF_COUNTER)
-    def reserve_gpus(self, num_gpus: int = 0) -> List[int]:
+    def reserve_gpus(
+        self, num_gpus: int = 0, partitions: List[int] = None
+    ) -> List[List[int]]:
         """Reserves set amount of GPUs.
 
         Args:
@@ -76,7 +79,8 @@ class GPUResourceAllocator(object):
         )
         for gpu_id in available_gpus:
             self._check_gpu(gpu_id)
-        return available_gpus
+
+        return self._partition_gpus(available_gpus, partitions)
 
     @timer(Timers.PERF_COUNTER)
     def warmup_gpus(self, gpus: List[int]) -> None:
@@ -157,3 +161,9 @@ class GPUResourceAllocator(object):
             logger.error(
                 f"{self._name}: GPU {gpu_id} cannot be utilised by PyTorch"
             )
+
+    def _partition_gpus(
+        self, gpus: List[int], partitions: List[int]
+    ) -> List[List[int]]:
+        it = iter(gpus)
+        return [list(islice(it, 0, partition)) for partition in partitions]
