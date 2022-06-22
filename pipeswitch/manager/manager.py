@@ -22,7 +22,6 @@ from typing import (  # pylint: disable=unused-import
     Tuple,
 )
 from torch.multiprocessing import Manager, Process, Queue
-import numpy as np
 from itertools import islice
 
 from pipeswitch.common.consts import State, Timers

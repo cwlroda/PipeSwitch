@@ -116,13 +116,19 @@ class FSDET:
                 request.urlretrieve(img_url, img_path)
             img = read_image(img_path, format="BGR")
             imgs.append(img)
+        imgs.extend(imgs)
+        imgs.extend(imgs)
+        imgs.extend(imgs)
         return imgs
 
     def import_model(self, devices=None):
         cfg = self.setup_cfg(self.args)
+        predictors = []
         if devices is not None:
-            cfg.defrost()
-            cfg.MODEL.DEVICE = devices[0]
-            cfg.freeze()
-        predictor = DefaultPredictor(cfg)
-        return predictor, predictor.model
+            for device in devices:
+                cfg.defrost()
+                cfg.MODEL.DEVICE = f"cuda:{device}"
+                cfg.freeze()
+                predictor = DefaultPredictor(cfg)
+                predictors.append(predictor)
+        return predictors

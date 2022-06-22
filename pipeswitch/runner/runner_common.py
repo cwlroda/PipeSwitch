@@ -9,17 +9,14 @@ class ModelSummary:
         self._model_name = model_name
         self._model_class = model_class
 
-    @timer(Timers.THREAD_TIMER)
+    @timer(Timers.PERF_COUNTER)
     def execute(self, task, data):
         return self.func(task, data)
 
     @timer(Timers.THREAD_TIMER)
     def load_model(self):
-        (
-            self.model,
-            self.func,
-        ) = self.model_class().import_task(self._devices)
+        self.func = self._model_class().import_task(self._devices)
 
     @timer(Timers.THREAD_TIMER)
     def load_data(self, task):
-        return self.model_class().import_data(task)
+        return self._model_class().import_data(task)

@@ -83,10 +83,11 @@ class GPUResourceAllocator(object):
         return self._partition_gpus(available_gpus, partitions)
 
     @timer(Timers.PERF_COUNTER)
-    def warmup_gpus(self, gpus: List[int]) -> None:
+    def warmup_gpus(self, gpus: List[List[int]]) -> None:
         """Warmup GPUs by running a dummy PyTorch function."""
-        for gpu_id in gpus:
-            torch.randn(1024, device=f"cuda:{gpu_id}")
+        for partition in gpus:
+            for gpu_id in partition:
+                torch.randn(1024, device=f"cuda:{gpu_id}")
 
     @timer(Timers.PERF_COUNTER)
     def release_gpus(self) -> None:
@@ -165,5 +166,10 @@ class GPUResourceAllocator(object):
     def _partition_gpus(
         self, gpus: List[int], partitions: List[int]
     ) -> List[List[int]]:
+        if len(partitions) == 1:
+            return [
+                gpus[i : i + partitions[0]]
+                for i in range(0, len(gpus), partitions[0])
+            ]
         it = iter(gpus)
         return [list(islice(it, 0, partition)) for partition in partitions]
