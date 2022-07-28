@@ -26,6 +26,7 @@ from pprint import pformat
 import json
 from multiprocessing.managers import DictProxy
 from torch.multiprocessing import Manager, Queue
+from pprint import pprint
 
 
 from scalabel_bot.common.consts import (

@@ -84,7 +84,9 @@ class Client:
 
         for i in range(self._num_it):
             if self._model_name == "test":
-                if i % 2 == 0:
+                if i == 0:
+                    model_name = "opt"
+                elif i % 2 == 0:
                     model_name = "fsdet"
                 else:
                     model_name = "dd3d"
@@ -107,15 +109,22 @@ class Client:
                         "length": 100,
                     },
                     {
-                        "prompt": "Computer science is the study of computation and",
+                        "prompt": (
+                            "Computer science is the study of computation and"
+                        ),
                         "length": 100,
                     },
                     {
-                        "prompt": "The University of California, Berkeley is a public",
+                        "prompt": (
+                            "The University of California, Berkeley is a public"
+                        ),
                         "length": 100,
                     },
                     {
-                        "prompt": "Ion Stoica is a Romanian-American computer scientist specializing in",
+                        "prompt": (
+                            "Ion Stoica is a Romanian-American computer"
+                            " scientist specializing in"
+                        ),
                         "length": 100,
                     },
                     {
@@ -131,11 +140,16 @@ class Client:
                         "length": 100,
                     },
                     {
-                        "prompt": "What do you think about the future of Cryptocurrency?",
+                        "prompt": (
+                            "What do you think about the future of"
+                            " Cryptocurrency?"
+                        ),
                         "length": 100,
                     },
                     {
-                        "prompt": "What do you think about the meaning of life?",
+                        "prompt": (
+                            "What do you think about the meaning of life?"
+                        ),
                         "length": 100,
                     },
                     {
@@ -166,7 +180,7 @@ class Client:
                 "taskId": task_id,
                 "taskType": task_type,
                 "taskKey": task_key,
-                "dataSize": 50,
+                "dataSize": 10 if model_name == "opt" else 50,
                 "items": items,
                 "modelName": model_name,
                 "channel": self._req_server.sub_stream,

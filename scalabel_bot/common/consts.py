@@ -61,6 +61,6 @@ class Timers(Enum):
 MODELS = {"box2d": "fsdet", "box3d": "dd3d", "textgen": "opt"}
 
 ESTCT: Dict[str, Dict[str, int]] = {
-    "inference": {"dd3d": 113, "fsdet": 172, "opt": 19980},
+    "inference": {"dd3d": 113, "fsdet": 172, "opt": 1988},
     "training": {},
 }
