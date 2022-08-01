@@ -1,5 +1,6 @@
+import numpy as np
 from abc import ABC, abstractmethod
-from typing import Dict, Tuple  # pylint: disable=unused-import
+from typing import Dict, List, Tuple  # pylint: disable=unused-import
 from torch.multiprocessing import (  # pylint: disable=unused-import
     Event,
     Process,
@@ -9,6 +10,7 @@ from torch.multiprocessing import (  # pylint: disable=unused-import
 from scalabel_bot.common.consts import State, Timers
 from scalabel_bot.common.func import cantor_pairing
 from scalabel_bot.common.logger import logger
+from scalabel_bot.common.message import Message
 from scalabel_bot.profiling.timer import timer
 
 
@@ -44,6 +46,7 @@ class TaskScheduler(Process):
         runner_status_queue: "Queue[Tuple[int, int, State]]",
         runner_ect: Dict[int, int],
         runner_ect_queue: "Queue[Tuple[int, int, int]]",
+        requests_queue: "List[Message]",
     ) -> None:
         super().__init__()
         self._name: str = self.__class__.__name__
@@ -56,6 +59,7 @@ class TaskScheduler(Process):
         self._runner_ect_queue: "Queue[Tuple[int, int, int]]" = runner_ect_queue
         self._runner_ect: Dict[int, int] = runner_ect
         self._curr_runner_id: int = 0
+        self._requests_queue: List[Message] = requests_queue
 
     def run(self) -> None:
         while not self._stop_run.is_set():
@@ -67,6 +71,17 @@ class TaskScheduler(Process):
         while not self._stop_run.is_set():
             device, runner_id, ect = self._runner_ect_queue.get()
             self._runner_ect[cantor_pairing(device, runner_id)] = ect
+
+    def choose_task(self):
+        # next_task = self._requests_queue[0]
+        next_task = min(
+            self._requests_queue, key=lambda x: np.log(x["ect"]) - x["wait"]
+        )
+        self._requests_queue.remove(next_task)
+        for i, task in enumerate(self._requests_queue):
+            task.update({"wait": task["wait"] + (task["ect"] / 1000)})
+            self._requests_queue[i] = task
+        return next_task
 
     @timer(Timers.THREAD_TIMER)
     def schedule(self) -> int:

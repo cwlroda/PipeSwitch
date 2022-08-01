@@ -16,10 +16,10 @@ from scalabel_bot.common.consts import (
 
 from scalabel_bot.common.logger import logger
 from scalabel_bot.common.message import Message
-from scalabel_bot.common.servers import (
+from scalabel_bot.profiling.timer import timer
+from scalabel_bot.server.stream import (
     ClientRequestsStream,
 )
-from scalabel_bot.profiling.timer import timer
 
 
 def get_parser() -> ArgumentParser:
@@ -54,7 +54,7 @@ class Client:
         self._client_id: str = "scalabel"
         self._results_queue: "Queue[Message]" = Queue()
         self._req_server: ClientRequestsStream = ClientRequestsStream(
-            client_id=self._client_id,
+            idx=self._client_id,
             host=REDIS_HOST,
             port=REDIS_PORT,
             sub_queue=self._results_queue,
@@ -81,10 +81,9 @@ class Client:
 
     @timer(Timers.PERF_COUNTER)
     def _prepare_requests(self) -> None:
-
         for i in range(self._num_it):
             if self._model_name == "test":
-                if i == 0:
+                if i % 3 == 0:
                     model_name = "opt"
                 elif i % 2 == 0:
                     model_name = "fsdet"

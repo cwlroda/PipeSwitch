@@ -12,12 +12,21 @@ class ModelSummary:
 
     @timer(Timers.PERF_COUNTER)
     def execute(self, task, data):
-        return self._func(task, data)
+        output = self._func(task, data)
+        # self._transfer()
+        return output
 
     @timer(Timers.PERF_COUNTER)
     def load_model(self):
+        # (
+        #     self._import_data,
+        #     self._transfer,
+        #     self._func,
+        # )
         self._func = self._model_class().import_task(self._devices)
 
     @timer(Timers.PERF_COUNTER)
     def load_data(self, task):
+        # self._transfer()
+        # return self._import_data(task)
         return self._model_class().import_data(task)

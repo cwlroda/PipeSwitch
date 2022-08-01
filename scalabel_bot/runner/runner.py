@@ -6,6 +6,7 @@ This module spawns workers and allocates tasks to available workers.
 Todo:
     * None
 """
+from time import sleep
 from typing import (  # pylint: disable=unused-import
     Dict,
     List,
@@ -117,10 +118,10 @@ class Runner(Process):
                 load_model.join()
                 self._load_jobs.append(load_model)
                 self._models[model_name] = model_summary
+                # break
             logger.debug(
                 f"{self._name} {self._device}-{self._id}: import models"
             )
-
         recv_task = Thread(target=self._recv_task)
         recv_task.daemon = True
         recv_task.start()
@@ -128,6 +129,7 @@ class Runner(Process):
         self._update_status(State.IDLE)
         while not self._stop_run.is_set():
             task: Message = self._task_queue.get()
+            print(f"Runner {self._device}: executing {task['modelName']}")
             self._manage_task(task)
 
     @timer(Timers.THREAD_TIMER)
@@ -190,11 +192,13 @@ class Runner(Process):
                         "scores": [0.8418, 0.7967, 0.7857, 0.7330],
                         "pred_classes": [9, 9, 9, 11],
                     }
+                    sleep(task["ect"] / 1000)
                 task["status"] = State.SUCCESS
                 task["output"] = output
                 self._results_queue.put(task)
-                gc.collect()
-                torch.cuda.empty_cache()
+                # with torch.no_grad():
+                #     gc.collect()
+                #     torch.cuda.empty_cache()
                 self._update_status(State.IDLE)
                 self._update_ect("remove", task)
                 return

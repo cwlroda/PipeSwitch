@@ -13,7 +13,7 @@ from scalabel_bot.common.consts import (
 verboselogs.install()
 logging.captureWarnings(True)
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
+logger.setLevel(logging.INFO)
 
 
 class TimingFileHandler(logging.FileHandler):

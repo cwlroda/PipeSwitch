@@ -10,6 +10,7 @@ class Message(TypedDict, total=False):
     taskKey: str
     dataSize: int
     items: List[Dict[str, Any]]
+    ect: int
     channel: str
     output: object
     status: object
