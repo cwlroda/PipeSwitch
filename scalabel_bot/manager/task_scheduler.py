@@ -1,6 +1,6 @@
 import numpy as np
 from abc import ABC, abstractmethod
-from typing import Dict, List, Tuple  # pylint: disable=unused-import
+from typing import Dict, List, Set, Tuple  # pylint: disable=unused-import
 from torch.multiprocessing import (  # pylint: disable=unused-import
     Event,
     Process,
@@ -17,25 +17,27 @@ from scalabel_bot.profiling.timer import timer
 class SchedulingPolicy(ABC):
     @abstractmethod
     def select_next(
-        self, runner_ect: Dict[int, int], runner_id: int = None
-    ) -> int:
+        self, runner_ect: Dict[int, int], runner_count: int = None
+    ) -> Tuple[int, int]:
         pass
 
 
 class RoundRobin(SchedulingPolicy):
     @timer(Timers.THREAD_TIMER)
-    def select_next(self, runner_ect: Dict[int, int], runner_id: int) -> int:
-        next_runner_id = (runner_id + 1) % len(runner_ect)
-        return list(runner_ect.keys())[next_runner_id]
+    def select_next(
+        self, runner_ect: Dict[int, int], runner_count: int
+    ) -> Tuple[int, int]:
+        next_runner_id = (runner_count + 1) % len(runner_ect)
+        return next_runner_id, list(runner_ect.keys())[next_runner_id]
 
 
 class LoadBalancing(SchedulingPolicy):
     @timer(Timers.THREAD_TIMER)
     def select_next(
-        self, runner_ect: Dict[int, int], runner_id: int = None
-    ) -> int:
+        self, runner_ect: Dict[int, int], runner_count: int = None
+    ) -> Tuple[int, int]:
         next_runner_id = min(runner_ect, key=runner_ect.get)
-        return next_runner_id
+        return runner_count, next_runner_id
 
 
 class TaskScheduler(Process):
@@ -46,7 +48,8 @@ class TaskScheduler(Process):
         runner_status_queue: "Queue[Tuple[int, int, State]]",
         runner_ect: Dict[int, int],
         runner_ect_queue: "Queue[Tuple[int, int, int]]",
-        requests_queue: "List[Message]",
+        requests_queue: List[Message],
+        clients: Dict[str, int],
     ) -> None:
         super().__init__()
         self._name: str = self.__class__.__name__
@@ -58,8 +61,9 @@ class TaskScheduler(Process):
         )
         self._runner_ect_queue: "Queue[Tuple[int, int, int]]" = runner_ect_queue
         self._runner_ect: Dict[int, int] = runner_ect
-        self._curr_runner_id: int = 0
+        self._runner_count: int = -1
         self._requests_queue: List[Message] = requests_queue
+        self._clients: Dict[str, int] = clients
 
     def run(self) -> None:
         while not self._stop_run.is_set():
@@ -72,15 +76,26 @@ class TaskScheduler(Process):
             device, runner_id, ect = self._runner_ect_queue.get()
             self._runner_ect[cantor_pairing(device, runner_id)] = ect
 
-    def choose_task(self):
-        # next_task = self._requests_queue[0]
-        next_task = min(
-            self._requests_queue, key=lambda x: np.log(x["ect"]) - x["wait"]
-        )
-        self._requests_queue.remove(next_task)
-        for i, task in enumerate(self._requests_queue):
-            task.update({"wait": task["wait"] + (task["ect"] / 1000)})
-            self._requests_queue[i] = task
+    def choose_task(self) -> Message:
+        while True:
+            if not self._requests_queue:
+                return None
+            next_task = self._requests_queue[0]
+            # next_task = min(self._requests_queue, key=lambda x: x["ect"])
+            # next_task = min(
+            #     self._requests_queue, key=lambda x: np.log(x["ect"]) - x["wait"]
+            # )
+            self._requests_queue.remove(next_task)
+            if next_task["clientId"] in self._clients.keys():
+                break
+        # for i, task in enumerate(self._requests_queue):
+        #     task.update(
+        #         {
+        #             "wait": task["wait"]
+        #             + (task["ect"] / 2000 / len(self._runner_ect))
+        #         }
+        #     )
+        #     self._requests_queue[i] = task
         return next_task
 
     @timer(Timers.THREAD_TIMER)
@@ -88,13 +103,10 @@ class TaskScheduler(Process):
         while not self._runner_ect_queue.empty():
             device, runner_id, ect = self._runner_ect_queue.get()
             self._runner_ect[cantor_pairing(device, runner_id)] = ect
-        if isinstance(self._policy, LoadBalancing):
-            self._curr_runner_id = self._policy.select_next(self._runner_ect)
-        elif isinstance(self._policy, RoundRobin):
-            self._curr_runner_id = self._policy.select_next(
-                self._runner_ect, self._curr_runner_id
-            )
-        return self._curr_runner_id
+        self._runner_count, next_runner_id = self._policy.select_next(
+            self._runner_ect, self._runner_count
+        )
+        return next_runner_id
 
     @timer(Timers.THREAD_TIMER)
     def shutdown(self):

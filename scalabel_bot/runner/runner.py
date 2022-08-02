@@ -72,6 +72,7 @@ class Runner(Process):
         model_list: List[str],
         model_classes: Dict[str, object],
         results_queue: "Queue[Message]",
+        clients: Dict[str, int],
     ) -> None:
         super().__init__()
         self._name = self.__class__.__name__
@@ -85,8 +86,9 @@ class Runner(Process):
         )
         self._runner_ect_queue: "Queue[Tuple[int, int, int]]" = runner_ect_queue
         self._task_in, self._task_out = Pipe()
-        self._task_queue: "Queue[Message]" = Queue()
+        self._task_queue: List[Message] = []
         self._results_queue: "Queue[Message]" = results_queue
+        self._clients: Dict[str, int] = clients
         self._model_list = model_list
         self._model_classes: Dict[str, object] = model_classes
         self._models: Dict[str, ModelSummary] = {}
@@ -127,10 +129,21 @@ class Runner(Process):
         recv_task.start()
         self._update_ect()
         self._update_status(State.IDLE)
+
         while not self._stop_run.is_set():
-            task: Message = self._task_queue.get()
-            print(f"Runner {self._device}: executing {task['modelName']}")
-            self._manage_task(task)
+            try:
+                if not self._task_queue:
+                    continue
+                task: Message = self._task_queue.pop(0)
+                # print(f"Runner {self._device}: {len(self._task_queue)}")
+                if task["clientId"] in self._clients.keys():
+                    # print(
+                    #     f"Runner {self._device}: executing {task['modelName']}"
+                    # )
+                    self._manage_task(task)
+                self._update_ect("remove", task)
+            except KeyboardInterrupt as kb_err:
+                return
 
     @timer(Timers.THREAD_TIMER)
     def _update_status(self, status: State) -> None:
@@ -162,8 +175,9 @@ class Runner(Process):
     def _recv_task(self) -> None:
         while not self._stop_run.is_set():
             task: Message = self._task_out.recv()
-            self._task_queue.put(task)
-            self._update_ect("append", task)
+            if task["clientId"] in self._clients.keys():
+                self._task_queue.append(task)
+                self._update_ect("append", task)
             self._task_out.send("OK")
 
     @timer(Timers.PERF_COUNTER)
@@ -200,7 +214,6 @@ class Runner(Process):
                 #     gc.collect()
                 #     torch.cuda.empty_cache()
                 self._update_status(State.IDLE)
-                self._update_ect("remove", task)
                 return
             except RuntimeError as runtime_err:
                 logger.error(runtime_err)
@@ -209,7 +222,7 @@ class Runner(Process):
                 )
                 continue
             except KeyboardInterrupt as kb_err:
-                raise KeyboardInterrupt from kb_err
+                continue
         logger.error(
             f"{self._name} {self._device}-{self._id}: max retries exceeded, "
             "skipping task"

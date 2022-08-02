@@ -105,6 +105,53 @@ class Stream(ABC):
         pass
 
 
+class ManagerConnectionsStream(Stream):
+    """Redis Server abstract base class.
+
+    It has two main functions:
+        - Subscribes to one channel and receives messages.
+        - Publishes to another channel.
+
+    Attributes:
+        _server_name (`str`): Name of the server.
+        _host (`str`): Redis host IP address.
+        _port (`int`): Redis port number.
+        _redis_pub (`redis.Redis`): Redis client for publishing.
+        pub_stream (`str`): Redis channel to publish to.
+        _pub_queue (`Queue[str]`): Queue for publishing messages.
+        _redis_sub (`redis.Redis`): Redis client for subscribing.
+        sub_stream (`str`): Redis channel to subscribe to.
+        _sub_queue (`Queue[str]`): Queue for receiving messages.
+        _module_id (`int`, optional): ID of the module the server is under.
+        _worker_id (`int`, optional): ID of the worker the server is under.
+        _client_id (`str`, optional): ID of the client.
+    """
+
+    @timer(Timers.PERF_COUNTER)
+    def _process_msg(
+        self, msg: List[List[str | List[Tuple[str, Dict[str, str]]]]]
+    ) -> None:
+        logger.debug(f"{self._server_name}: Message received:\n{pformat(msg)}")
+        for msg_item in msg:
+            if isinstance(msg_item[1], str):
+                continue
+            entry_id, entry = msg_item[1][0]
+            if "message" in entry.keys():
+                data: Message = json.loads(entry["message"])
+                self._sub_queue.append(data)
+            self._msg_id = entry_id
+        logger.spam(f"{self._server_name}: Deleting message\n{pformat(msg)}")
+        self._redis.xtrim(self.sub_stream, minid=self._msg_id)
+
+    @property
+    def pub_stream(self) -> str:
+        return "HANDSHAKES"
+
+    @property
+    def sub_stream(self) -> str:
+        return "CONNECTIONS"
+
+
 class ManagerRequestsStream(Stream):
     """Redis Server abstract base class.
 
@@ -155,6 +202,53 @@ class ManagerRequestsStream(Stream):
     @property
     def sub_stream(self) -> str:
         return "REQUESTS"
+
+
+class ClientConnectionsStream(Stream):
+    """Redis Server abstract base class.
+
+    It has two main functions:
+        - Subscribes to one channel and receives messages.
+        - Publishes to another channel.
+
+    Attributes:
+        _server_name (`str`): Name of the server.
+        _host (`str`): Redis host IP address.
+        _port (`int`): Redis port number.
+        _redis_pub (`redis.Redis`): Redis client for publishing.
+        pub_stream (`str`): Redis channel to publish to.
+        _pub_queue (`Queue[str]`): Queue for publishing messages.
+        _redis_sub (`redis.Redis`): Redis client for subscribing.
+        sub_stream (`str`): Redis channel to subscribe to.
+        _sub_queue (`Queue[str]`): Queue for receiving messages.
+        _module_id (`int`, optional): ID of the module the server is under.
+        _worker_id (`int`, optional): ID of the worker the server is under.
+        _client_id (`str`, optional): ID of the client.
+    """
+
+    @timer(Timers.PERF_COUNTER)
+    def _process_msg(
+        self, msg: List[List[str | List[Tuple[str, Dict[str, str]]]]]
+    ) -> None:
+        logger.debug(f"{self._server_name}: Message received:\n{pformat(msg)}")
+        for msg_item in msg:
+            if isinstance(msg_item[1], str):
+                continue
+            entry_id, entry = msg_item[1][0]
+            if "message" in entry.keys():
+                data: Message = json.loads(entry["message"])
+                self._sub_queue.append(data)
+            self._msg_id = entry_id
+        logger.spam(f"{self._server_name}: Deleting message\n{pformat(msg)}")
+        self._redis.xtrim(self.sub_stream, minid=self._msg_id)
+
+    @property
+    def pub_stream(self) -> str:
+        return "CONNECTIONS"
+
+    @property
+    def sub_stream(self) -> str:
+        return f"HANDSHAKES_{self._server_name}"
 
 
 class ClientRequestsStream(Stream):

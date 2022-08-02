@@ -1,15 +1,18 @@
 # -*- coding: utf-8 -*-
+import sys
 import json
 from time import perf_counter_ns, sleep
 from argparse import ArgumentParser
 from uuid import uuid4
 from queue import Queue
-from typing import Dict
+from typing import Dict, List
 from threading import Thread
 
 from scalabel_bot.common.consts import (
+    ConnectionRequest,
     REDIS_HOST,
     REDIS_PORT,
+    ResponseStatus,
     State,
     Timers,
 )
@@ -18,6 +21,7 @@ from scalabel_bot.common.logger import logger
 from scalabel_bot.common.message import Message
 from scalabel_bot.profiling.timer import timer
 from scalabel_bot.server.stream import (
+    ClientConnectionsStream,
     ClientRequestsStream,
 )
 
@@ -50,9 +54,17 @@ class Client:
     @timer(Timers.PERF_COUNTER)
     def __init__(self, model_name, batch_size, num_it) -> None:
         super().__init__()
+        self._do_run: bool = True
         self._name: str = self.__class__.__name__
-        self._client_id: str = "scalabel"
+        self._client_id: str = str(uuid4())
         self._results_queue: "Queue[Message]" = Queue()
+        self._handshakes_queue: List[Message] = []
+        self._conn_server: ClientConnectionsStream = ClientConnectionsStream(
+            idx=self._client_id,
+            host=REDIS_HOST,
+            port=REDIS_PORT,
+            sub_queue=self._handshakes_queue,
+        )
         self._req_server: ClientRequestsStream = ClientRequestsStream(
             idx=self._client_id,
             host=REDIS_HOST,
@@ -68,16 +80,83 @@ class Client:
     @timer(Timers.PERF_COUNTER)
     def run(self) -> None:
         try:
+            self._conn_server.run()
+            while not self._conn_server.ready:
+                sleep(0.1)
             self._req_server.run()
+            self._connect()
             self._prepare_requests()
             while not self._req_server.ready:
                 sleep(0.1)
+            ping = Thread(target=self._ping)
+            ping.daemon = True
+            ping.start()
             send_requests = Thread(target=self._send_requests)
             send_requests.daemon = True
             send_requests.start()
             self._receive_results()
+            self._disconnect()
         except KeyboardInterrupt:
             self._shutdown()
+
+    @timer(Timers.PERF_COUNTER)
+    def _connect(self) -> None:
+        conn = {
+            "clientId": self._client_id,
+            "channel": self._conn_server.sub_stream,
+            "request": str(ConnectionRequest.CONNECT),
+        }
+        msg: str = {"message": json.dumps(conn)}
+        channel: str = self._conn_server.pub_stream
+        self._conn_server.publish(channel, msg)
+        while not self._handshakes_queue:
+            sleep(0.01)
+        conn: Message = self._handshakes_queue.pop(0)
+        if conn["clientId"] == self._client_id:
+            if conn["status"] == ResponseStatus.OK:
+                logger.success(f"Client {self._client_id}: Connected")
+                return
+            elif conn["status"] == str(ResponseStatus.ERROR):
+                logger.error(
+                    f"Client {self._client_id} error msg: {conn['err_msg']}"
+                )
+                sys.exit(1)
+        else:
+            logger.debug(
+                f"Client {self._client_id}: Ignoring invalid handshake {msg}"
+            )
+
+    def _ping(self) -> None:
+        while self._do_run:
+            sleep(5)
+            self._connect()
+
+    @timer(Timers.PERF_COUNTER)
+    def _disconnect(self) -> None:
+        conn = {
+            "clientId": self._client_id,
+            "channel": self._conn_server.sub_stream,
+            "request": str(ConnectionRequest.DISCONNECT),
+        }
+        msg: str = {"message": json.dumps(conn)}
+        channel: str = self._conn_server.pub_stream
+        self._conn_server.publish(channel, msg)
+        while not self._handshakes_queue:
+            sleep(0.01)
+        conn: Message = self._handshakes_queue.pop(0)
+        if conn["clientId"] == self._client_id:
+            if conn["status"] == str(ResponseStatus.OK):
+                logger.success(f"Client {self._client_id}: Disconnected")
+                return
+            elif conn["status"] == str(ResponseStatus.ERROR):
+                logger.error(
+                    f"Client {self._client_id} error msg: {conn['err_msg']}"
+                )
+                sys.exit(1)
+        else:
+            logger.debug(
+                f"Client {self._client_id}: Ignoring invalid handshake {msg}"
+            )
 
     @timer(Timers.PERF_COUNTER)
     def _prepare_requests(self) -> None:
@@ -178,8 +257,8 @@ class Client:
                 "projectName": "bot-batch",
                 "taskId": task_id,
                 "taskType": task_type,
-                "taskKey": task_key,
-                "dataSize": 10 if model_name == "opt" else 50,
+                # "taskKey": task_key,
+                "dataSize": 1 if model_name == "opt" else 1,
                 "items": items,
                 "modelName": model_name,
                 "channel": self._req_server.sub_stream,
@@ -191,6 +270,10 @@ class Client:
         while True:
             task: Message = self._task_queue.get()
             self._send_request(task)
+            if task["modelName"] == "opt":
+                sleep(0.5)
+            else:
+                sleep(0.05)
 
     @timer(Timers.THREAD_TIMER)
     def _send_request(self, task) -> None:

@@ -16,15 +16,11 @@ Todo:
 from time import sleep
 import os
 import importlib
-from typing import (  # pylint: disable=unused-import
-    List,
-    Dict,
-    Tuple,
-)
+from typing import List, Dict, Tuple, Set  # pylint: disable=unused-import
 from threading import Thread
 from pprint import pformat
 import json
-from multiprocessing.managers import DictProxy, ListProxy
+from multiprocessing.managers import SyncManager
 from torch.multiprocessing import Manager, Queue
 
 from scalabel_bot.common.consts import (
@@ -42,6 +38,7 @@ from scalabel_bot.manager.gpu_resource_allocator import (
     GPUResourceAllocator,
 )
 from scalabel_bot.manager.task_scheduler import TaskScheduler
+from scalabel_bot.manager.client_manager import ClientManager
 from scalabel_bot.profiling.timer import timer
 from scalabel_bot.runner.runner import Runner
 from scalabel_bot.server.stream import (
@@ -86,12 +83,17 @@ class BotManager:
         self._mode: str = mode
         self._num_gpus: int = num_gpus
         self._gpu_ids: List[int] = gpu_ids if gpu_ids else []
-        self._manager = Manager()
-        self._runner_status: DictProxy[int, State] = self._manager.dict()
+        self._manager: SyncManager = Manager()
+        self._clients: Dict[str, int] = self._manager.dict()
+        self._clients_queue: List[Message] = self._manager.list()
+        self._client_manager: ClientManager = ClientManager(
+            clients=self._clients, clients_queue=self._clients_queue
+        )
+        self._runner_status: Dict[int, State] = self._manager.dict()
         self._runner_status_queue: "Queue[Tuple[int, int, State]]" = Queue()
-        self._runner_ect: DictProxy[int, int] = self._manager.dict()
+        self._runner_ect: Dict[int, int] = self._manager.dict()
         self._runner_ect_queue: "Queue[Tuple[int, int, int]]" = Queue()
-        self._requests_queue: ListProxy[Message] = self._manager.list()
+        self._requests_queue: List[Message] = self._manager.list()
         self._req_stream: ManagerRequestsStream = ManagerRequestsStream(
             host=REDIS_HOST,
             port=REDIS_PORT,
@@ -104,14 +106,11 @@ class BotManager:
         )
         self._results_queue: "Queue[Message]" = Queue()
         self._model_list: List[str] = []
-        self._model_classes: DictProxy = self._manager.dict()
+        self._model_classes: Dict = self._manager.dict()
         self._models: Dict[str, object] = {}
         self._runners: Dict[int, Runner] = {}
         self._tasks_complete: int = 0
         self._tasks_failed: int = 0
-
-        self._req_stream.run()
-        self._req_pubsub.run()
         if self._mode == "gpu":
             self._gra: GPUResourceAllocator = GPUResourceAllocator()
             self._allocated_gpus = self._gra.reserve_gpus(
@@ -121,18 +120,15 @@ class BotManager:
             # self._gra.warmup_gpus(gpus=self._allocated_gpus)
         else:
             self._allocated_gpus = [*range(self._num_gpus)]
-        self._load_models()
         self._task_scheduler: TaskScheduler = TaskScheduler(
             runner_status=self._runner_status,
             runner_status_queue=self._runner_status_queue,
             runner_ect=self._runner_ect,
             runner_ect_queue=self._runner_ect_queue,
             requests_queue=self._requests_queue,
+            clients=self._clients,
         )
-        self._task_scheduler.daemon = True
-        self._task_scheduler.start()
-        self._create_runners()
-        self.check_result: Thread = Thread(
+        self._results_checker: Thread = Thread(
             target=self._check_result,
             args=(
                 self._results_queue,
@@ -140,8 +136,6 @@ class BotManager:
                 self._req_pubsub,
             ),
         )
-        self.check_result.daemon = True
-        self.check_result.start()
 
     def run(self) -> None:
         """Main manager function that sets up the manager and runs it.
@@ -150,11 +144,21 @@ class BotManager:
             `TypeError`: If the message received is not a JSON string.
         """
         try:
+            self._client_manager.daemon = True
+            self._client_manager.start()
+            self._req_stream.run()
+            self._req_pubsub.run()
             logger.success(
                 "\n*********************************************\n"
                 f"{self._name}: Ready to receive requests!\n"
                 "*********************************************"
             )
+            self._load_models()
+            self._task_scheduler.daemon = True
+            self._task_scheduler.start()
+            self._create_runners()
+            self._results_checker.daemon = True
+            self._results_checker.start()
             logger.debug(
                 f"{self._name}: Waiting for at least one runner to be ready"
             )
@@ -168,10 +172,8 @@ class BotManager:
                 "******************************************"
             )
             while self._do_run:
-                if len(self._requests_queue) == 0:
-                    sleep(0.001)
-                    continue
-                self._allocate_task()
+                if self._requests_queue:
+                    self._allocate_task()
         except GPUError:
             return
         except KeyboardInterrupt:
@@ -237,6 +239,7 @@ class BotManager:
                     model_list=self._model_list,
                     model_classes=self._model_classes,
                     results_queue=self._results_queue,
+                    clients=self._clients,
                 )
                 runner.daemon = True
                 runner.start()
@@ -248,6 +251,8 @@ class BotManager:
     @timer(Timers.PERF_COUNTER)
     def _allocate_task(self) -> None:
         task: Message = self._task_scheduler.choose_task()
+        if task is None:
+            return
         logger.debug(pformat(task))
         runner_id = self._task_scheduler.schedule()
         runner: Runner = self._runners[runner_id]
@@ -258,7 +263,12 @@ class BotManager:
             return
 
     @timer(Timers.PERF_COUNTER)
-    def _check_result(self, results_queue, req_stream, req_pubsub) -> None:
+    def _check_result(
+        self,
+        results_queue: "Queue[Message]",
+        req_stream: ManagerRequestsStream,
+        req_pubsub: ManagerRequestsPubSub,
+    ) -> None:
         tasks_complete = 0
         tasks_failed = 0
         while True:
