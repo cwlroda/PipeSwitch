@@ -20,9 +20,10 @@ import os
 import shutil
 import traceback
 from argparse import ArgumentParser
-from torch.multiprocessing import set_start_method
+from torch.multiprocessing import Event, set_start_method
 from redis import exceptions, Redis
 import ast
+import warnings
 
 from scalabel_bot.common.consts import (
     DEBUG_LOG_FILE,
@@ -57,7 +58,7 @@ def get_parser() -> ArgumentParser:
         "--gpu_id",
         type=str,
         default="",
-        help=("Specific GPU ids"),
+        help="Specific GPU ids",
     )
     parser.add_argument(
         "--redis",
@@ -85,6 +86,7 @@ def launch():
     try:
         clear_logs(DEBUG_LOG_FILE)
         clear_logs(TIMING_LOG_FILE)
+        stop_run: Event = Event()
         logger.info(f"PID: {os.getpid()}")
         args: ArgumentParser = get_parser().parse_args()
         logger.info(f"Arguments: {str(args)}")
@@ -104,7 +106,10 @@ def launch():
         else:
             gpu_ids = []
         manager: BotManager = BotManager(
-            mode=mode, num_gpus=args.num_gpus, gpu_ids=gpu_ids
+            stop_run=stop_run,
+            mode=mode,
+            num_gpus=args.num_gpus,
+            gpu_ids=gpu_ids,
         )
         manager.run()
     except exceptions.ConnectionError as conn_err:
@@ -119,17 +124,16 @@ def launch():
     except ConnectionResetError as err:
         logger.error(err)
     except KeyboardInterrupt:
-        pass
+        stop_run.set()
     except Exception as err:  # pylint: disable=broad-except
         logger.error(err)
         logger.error(traceback.format_exc())
     finally:
-        if "manager" in locals():
-            manager.shutdown()
         if args.redis:
             os.system("redis-cli shutdown")
 
 
 if __name__ == "__main__":
+    warnings.filterwarnings("ignore")
     set_start_method("spawn", force=True)
     launch()

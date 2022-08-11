@@ -5,7 +5,6 @@ import json
 from tqdm import tqdm
 from redis import Redis
 import torch
-from time import sleep
 
 from detectron2.modeling import build_model
 from detectron2.config import get_cfg
@@ -47,7 +46,6 @@ class DD3D:
         cfg.MODEL.DEVICE = device
         self.cfg = cfg.clone()
         self.model = build_model(cfg)
-        # self.model.to(torch.device("cpu"))
         self.model.to(torch.device(self.cfg.MODEL.DEVICE))
         checkpointer = DetectionCheckpointer(self.model, save_to_disk=True)
         checkpointer.load(self.cfg.MODEL.WEIGHTS)
@@ -55,20 +53,6 @@ class DD3D:
             self.model.eval()
         elif mode == "training":
             self.model.train()
-
-    def transfer_model(self, mode) -> None:
-        if next(self.model.parameters()).is_cuda:
-            print("TRANSFERRING TO CPU")
-            self.model.to(torch.device("cpu"))
-        else:
-            print("TRANSFERRING TO GPU")
-            self.model.to(torch.device(self.cfg.MODEL.DEVICE))
-            checkpointer = DetectionCheckpointer(self.model, save_to_disk=True)
-            checkpointer.load(self.cfg.MODEL.WEIGHTS)
-            if mode == "inference":
-                self.model.eval()
-            elif mode == "training":
-                self.model.train()
 
     @timer(Timers.PERF_COUNTER)
     def url_to_img(self, url, img_dir):
@@ -79,17 +63,14 @@ class DD3D:
             request.urlretrieve(url, img_path)
         img = read_image(img_path, format="BGR")
         height, width = img.shape[:2]
-        img = torch.as_tensor(
-            img.astype("float32").transpose(2, 0, 1),
-            # device=torch.device(self.cfg.MODEL.DEVICE),
-        )
+        img = torch.as_tensor(img.astype("float32").transpose(2, 0, 1))
         return {"image": img, "height": height, "width": width}
 
     @timer(Timers.PERF_COUNTER)
     def import_data(self, task):
         image_list = []
         img_dir = os.path.join("data", f"{task['projectName']}")
-        if "taskKey" in task.keys():
+        if "taskKey" in task:
             data_str = self._data_loader.get(task["taskKey"])
             data = json.loads(data_str)
             img_urls = [item["urls"]["-1"] for item in data["task"]["items"]]
@@ -145,8 +126,6 @@ class DD3D:
         return image_list
 
     def handle_batch_detection(self, inputs):
-        # while not next(self.model.parameters()).is_cuda:
-        #     sleep(0.01)
         with torch.no_grad():
             predictions = self.model(inputs)
             return predictions

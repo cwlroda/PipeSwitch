@@ -1,6 +1,5 @@
 from tqdm import tqdm
 import numpy as np
-from threading import Thread
 
 from scalabel_bot.common.consts import Timers
 from scalabel_bot.profiling.timer import timer
@@ -22,10 +21,6 @@ class DD3DInference:
         return data
 
     def import_func(self):
-        def import_data(task):
-            data = self.dd3d.import_data(task)
-            return data
-
         def inference(task, data):
             output = []
             for img in tqdm(
@@ -38,15 +33,7 @@ class DD3DInference:
                 output.extend(self.dd3d(img))
             return output
 
-        def transfer_model():
-            transfer_model = Thread(
-                target=self.dd3d.transfer_model, args=("inference",)
-            )
-            transfer_model.daemon = True
-            transfer_model.start()
-
         return inference
-        return import_data, transfer_model, inference
 
     @timer(Timers.THREAD_TIMER)
     def import_task(self, device):

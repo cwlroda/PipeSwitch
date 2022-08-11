@@ -1,7 +1,13 @@
 from typing import Any, List, Dict, TypedDict
 
 
-class Message(TypedDict, total=False):
+class ConnectionMessage(TypedDict, total=False):
+    clientId: str
+    channel: str
+    request: str
+
+
+class TaskMessage(TypedDict, total=False):
     type: str
     clientId: str
     projectName: str
@@ -11,6 +17,7 @@ class Message(TypedDict, total=False):
     dataSize: int
     items: List[Dict[str, Any]]
     ect: int
+    wait: int
     channel: str
-    output: object
+    output: object | None
     status: object

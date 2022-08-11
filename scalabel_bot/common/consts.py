@@ -15,6 +15,8 @@ TIMING_LOG_FILE = "logs/profiling/timing.log"
 # latency threshold (in ms)
 LATENCY_THRESHOLD = 10
 
+CONNECTION_TIMEOUT = 10
+
 
 class State(Enum):
     """Common status codes."""
@@ -46,6 +48,7 @@ class ConnectionRequest(Enum):
         return str(self.value)
 
     CONNECT = "CONNECT"
+    PING = "PING"
     DISCONNECT = "DISCONNECT"
 
 

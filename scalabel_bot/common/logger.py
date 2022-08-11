@@ -11,9 +11,9 @@ from scalabel_bot.common.consts import (
 
 
 verboselogs.install()
-logging.captureWarnings(True)
+# logging.captureWarnings(True)
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
+logger.setLevel(logging.DEBUG)
 
 
 class TimingFileHandler(logging.FileHandler):
@@ -42,7 +42,7 @@ class TimingFormatter(logging.Formatter):
         return formatter.format(record)
 
 
-class Formatter(logging.Formatter):
+class ColoredFormatter(logging.Formatter):
     """Logging colored formatter"""
 
     def __init__(self):
@@ -104,8 +104,8 @@ class Formatter(logging.Formatter):
 
 
 stdout_handler = logging.StreamHandler()
-stdout_handler.setLevel(logging.DEBUG)
-stdout_handler.setFormatter(Formatter())
+stdout_handler.setLevel(logging.INFO)
+stdout_handler.setFormatter(ColoredFormatter())
 
 if not os.path.exists(DEBUG_LOG_FILE):
     os.makedirs(os.path.dirname(DEBUG_LOG_FILE), exist_ok=True)

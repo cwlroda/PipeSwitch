@@ -16,12 +16,13 @@ Todo:
 from time import sleep
 import os
 import importlib
-from typing import List, Dict, Tuple, Set  # pylint: disable=unused-import
+from typing import List, Dict, Tuple
 from threading import Thread
 from pprint import pformat
 import json
+from queue import Queue
 from multiprocessing.managers import SyncManager
-from torch.multiprocessing import Manager, Queue
+from multiprocessing import Event, Manager, Queue as MPQueue
 
 from scalabel_bot.common.consts import (
     MODEL_LIST_FILE,
@@ -30,23 +31,16 @@ from scalabel_bot.common.consts import (
     State,
     Timers,
 )
-from scalabel_bot.common.exceptions import GPUError
 from scalabel_bot.common.func import cantor_pairing
 from scalabel_bot.common.logger import logger
-from scalabel_bot.common.message import Message
-from scalabel_bot.manager.gpu_resource_allocator import (
-    GPUResourceAllocator,
-)
-from scalabel_bot.manager.task_scheduler import TaskScheduler
+from scalabel_bot.common.message import TaskMessage
+from scalabel_bot.manager.gpu_resource_allocator import GPUResourceAllocator
+from scalabel_bot.scheduler.task_scheduler import TaskScheduler
 from scalabel_bot.manager.client_manager import ClientManager
 from scalabel_bot.profiling.timer import timer
 from scalabel_bot.runner.runner import Runner
-from scalabel_bot.server.stream import (
-    ManagerRequestsStream,
-)
-from scalabel_bot.server.pubsub import (
-    ManagerRequestsPubSub,
-)
+from scalabel_bot.server.stream import ManagerRequestsStream
+from scalabel_bot.server.pubsub import ManagerRequestsPubSub
 
 
 class BotManager:
@@ -75,36 +69,42 @@ class BotManager:
 
     @timer(Timers.PERF_COUNTER)
     def __init__(
-        self, mode: str = "gpu", num_gpus: int = 0, gpu_ids: List[int] = None
+        self,
+        stop_run: Event,
+        mode: str = "gpu",
+        num_gpus: int = 0,
+        gpu_ids: List[int] = None,
     ) -> None:
         super().__init__()
         self._name: str = self.__class__.__name__
-        self._do_run: bool = True
+        self._stop_run: Event = stop_run
         self._mode: str = mode
         self._num_gpus: int = num_gpus
         self._gpu_ids: List[int] = gpu_ids if gpu_ids else []
         self._manager: SyncManager = Manager()
         self._clients: Dict[str, int] = self._manager.dict()
-        self._clients_queue: List[Message] = self._manager.list()
         self._client_manager: ClientManager = ClientManager(
-            clients=self._clients, clients_queue=self._clients_queue
+            stop_run=self._stop_run,
+            clients=self._clients,
         )
         self._runner_status: Dict[int, State] = self._manager.dict()
-        self._runner_status_queue: "Queue[Tuple[int, int, State]]" = Queue()
+        self._runner_status_queue: Queue[Tuple[int, int, State]] = MPQueue()
         self._runner_ect: Dict[int, int] = self._manager.dict()
-        self._runner_ect_queue: "Queue[Tuple[int, int, int]]" = Queue()
-        self._requests_queue: List[Message] = self._manager.list()
+        self._runner_ect_queue: Queue[Tuple[int, int, int]] = MPQueue()
+        self._requests_queue: List[TaskMessage] = self._manager.list()
         self._req_stream: ManagerRequestsStream = ManagerRequestsStream(
+            stop_run=self._stop_run,
             host=REDIS_HOST,
             port=REDIS_PORT,
             sub_queue=self._requests_queue,
         )
         self._req_pubsub: ManagerRequestsPubSub = ManagerRequestsPubSub(
+            stop_run=self._stop_run,
             host=REDIS_HOST,
             port=REDIS_PORT,
             sub_queue=self._requests_queue,
         )
-        self._results_queue: "Queue[Message]" = Queue()
+        self._results_queue: Queue[TaskMessage] = MPQueue()
         self._model_list: List[str] = []
         self._model_classes: Dict = self._manager.dict()
         self._models: Dict[str, object] = {}
@@ -113,14 +113,16 @@ class BotManager:
         self._tasks_failed: int = 0
         if self._mode == "gpu":
             self._gra: GPUResourceAllocator = GPUResourceAllocator()
-            self._allocated_gpus = self._gra.reserve_gpus(
+            self._allocated_gpus: List[int] = self._gra.reserve_gpus(
                 self._num_gpus, self._gpu_ids
             )
             logger.info(f"{self._name}: Allocated GPUs {self._allocated_gpus}")
-            # self._gra.warmup_gpus(gpus=self._allocated_gpus)
+            self._gra.warmup_gpus(gpus=self._allocated_gpus)
         else:
-            self._allocated_gpus = [*range(self._num_gpus)]
+            self._allocated_gpus: List[int] = [*range(self._num_gpus)]
         self._task_scheduler: TaskScheduler = TaskScheduler(
+            stop_run=self._stop_run,
+            num_runners=len(self._allocated_gpus),
             runner_status=self._runner_status,
             runner_status_queue=self._runner_status_queue,
             runner_ect=self._runner_ect,
@@ -143,60 +145,42 @@ class BotManager:
         Raises:
             `TypeError`: If the message received is not a JSON string.
         """
+        self._client_manager.daemon = True
+        self._client_manager.start()
+        self._req_stream.daemon = True
+        self._req_stream.start()
+        self._req_pubsub.daemon = True
+        self._req_pubsub.start()
+        logger.success(
+            "\n*********************************************\n"
+            f"{self._name}: Ready to receive requests!\n"
+            "*********************************************"
+        )
+        self._load_models()
+        self._task_scheduler.daemon = True
+        self._task_scheduler.start()
+        self._create_runners()
+        self._results_checker.daemon = True
+        self._results_checker.start()
+        logger.debug(
+            f"{self._name}: Waiting for at least one runner to be ready"
+        )
+        while (len(self._runner_status) < len(self._runners)) and (
+            len(self._runner_ect) < len(self._runners)
+        ):
+            sleep(1)
+        logger.success(
+            "\n******************************************\n"
+            f"{self._name}: Ready to execute tasks!\n"
+            "******************************************"
+        )
         try:
-            self._client_manager.daemon = True
-            self._client_manager.start()
-            self._req_stream.run()
-            self._req_pubsub.run()
-            logger.success(
-                "\n*********************************************\n"
-                f"{self._name}: Ready to receive requests!\n"
-                "*********************************************"
-            )
-            self._load_models()
-            self._task_scheduler.daemon = True
-            self._task_scheduler.start()
-            self._create_runners()
-            self._results_checker.daemon = True
-            self._results_checker.start()
-            logger.debug(
-                f"{self._name}: Waiting for at least one runner to be ready"
-            )
-            while (len(self._runner_status) < len(self._runners)) and (
-                len(self._runner_ect) < len(self._runners)
-            ):
-                sleep(1)
-            logger.success(
-                "\n******************************************\n"
-                f"{self._name}: Ready to execute tasks!\n"
-                "******************************************"
-            )
-            while self._do_run:
+            while not self._stop_run.is_set():
                 if self._requests_queue:
                     self._allocate_task()
-        except GPUError:
-            return
         except KeyboardInterrupt:
-            return
-
-    @timer(Timers.PERF_COUNTER)
-    def shutdown(self) -> None:
-        logger.warning(f"{self._name}: Shutting down")
-        if hasattr(self, "_scheduler"):
-            if self._task_scheduler.is_alive():
-                self._task_scheduler.shutdown()
-                self._task_scheduler.terminate()
-            logger.warning(f"{self._name}: Terminated scheduler")
-        if hasattr(self, "_runners"):
-            for runner in self._runners.values():
-                if runner.is_alive():
-                    runner.shutdown()
-                    runner.terminate()
-            logger.warning(f"{self._name}: Terminated runners")
-        self._do_run = False
-        if self._mode == "gpu" and hasattr(self, "_gra"):
-            self._gra.release_gpus()
-        logger.info(f"{self._name}: Successfully shut down")
+            self._stop_run.set()
+            self._req_stream.shutdown()
 
     @timer(Timers.PERF_COUNTER)
     def _load_model_list(self, file_name: str) -> None:
@@ -210,10 +194,12 @@ class BotManager:
         """
         if not os.path.exists(file_name):
             logger.error(f"{self._name}: Model list file {file_name} not found")
-            raise KeyboardInterrupt
+            return
 
         with open(file=file_name, mode="r", encoding="utf-8") as f:
-            self._model_list = [line.strip() for line in f.readlines()]
+            self._model_list: List[str] = [
+                line.strip() for line in f.readlines()
+            ]
 
     @timer(Timers.PERF_COUNTER)
     def _load_models(self) -> None:
@@ -231,6 +217,7 @@ class BotManager:
         for device in self._allocated_gpus:
             for runner_id in range(1):
                 runner: Runner = Runner(
+                    stop_run=self._stop_run,
                     mode=self._mode,
                     device=device,
                     runner_id=runner_id,
@@ -250,29 +237,22 @@ class BotManager:
 
     @timer(Timers.PERF_COUNTER)
     def _allocate_task(self) -> None:
-        task: Message = self._task_scheduler.choose_task()
-        if task is None:
-            return
+        task, runner_id = self._task_scheduler.schedule()
         logger.debug(pformat(task))
-        runner_id = self._task_scheduler.schedule()
         runner: Runner = self._runners[runner_id]
         runner.task_in.send(task)
-        while self._runner_ect_queue.empty():
-            sleep(0.05)
-        if runner.task_in.recv() == "OK":
-            return
 
     @timer(Timers.PERF_COUNTER)
     def _check_result(
         self,
-        results_queue: "Queue[Message]",
+        results_queue: Queue[TaskMessage],
         req_stream: ManagerRequestsStream,
         req_pubsub: ManagerRequestsPubSub,
     ) -> None:
         tasks_complete = 0
         tasks_failed = 0
         while True:
-            result: Message = results_queue.get()
+            result: TaskMessage = results_queue.get()
             if result["status"] == State.SUCCESS:
                 tasks_complete += 1
             else:
